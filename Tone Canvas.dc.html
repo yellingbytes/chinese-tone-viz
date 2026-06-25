@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#f3f1ec;}
+  *{box-sizing:border-box;}
+  textarea{font-family:'Noto Sans SC',sans-serif;}
+  button{font-family:inherit;cursor:pointer;}
+  ::selection{background:#cfe0ff;}
+</style>
+</helmet>
+<div style="position:fixed;inset:0;overflow:hidden;background:#f3f1ec;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#17150f;-webkit-font-smoothing:antialiased;">
+
+  {{ canvasContent }}
+
+  <div style="position:absolute;top:18px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;padding:7px 10px;background:rgba(255,255,255,0.82);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid rgba(20,18,12,0.08);border-radius:14px;box-shadow:0 8px 30px rgba(20,18,12,0.10),0 1px 2px rgba(20,18,12,0.06);z-index:50;user-select:none;">
+    <div style="display:flex;align-items:center;gap:9px;padding:0 8px 0 4px;">
+      <span style="font-size:22px;font-weight:900;font-family:'Noto Sans SC',sans-serif;line-height:1;letter-spacing:-1px;">聲</span>
+      <span style="font-size:13px;font-weight:600;letter-spacing:-0.2px;color:#211e16;">Tone&nbsp;Canvas</span>
+    </div>
+    <div style="width:1px;height:22px;background:rgba(20,18,12,0.10);margin:0 2px;"></div>
+    <div style="display:flex;padding:3px;background:rgba(20,18,12,0.05);border-radius:9px;gap:2px;">
+      <button onClick="{{ setRead }}" style="{{ readBtnStyle }}">Read</button>
+      <button onClick="{{ setPoster }}" style="{{ posterBtnStyle }}">Poster</button>
+    </div>
+    <button onClick="{{ toggleFrames }}" style="{{ framesBtnStyle }}">
+      <span style="font-size:13px;line-height:1;">◇</span> Tone&nbsp;frames
+    </button>
+    <div style="width:1px;height:22px;background:rgba(20,18,12,0.10);margin:0 2px;"></div>
+    <button onClick="{{ addSample }}" style="display:flex;align-items:center;gap:5px;padding:7px 12px;font-size:12.5px;font-weight:600;color:#211e16;background:transparent;border:none;border-radius:8px;">+ Sample</button>
+  </div>
+
+  <div style="position:absolute;bottom:16px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:14px;padding:7px 15px;background:rgba(255,255,255,0.72);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid rgba(20,18,12,0.06);border-radius:11px;font-size:11.5px;color:#6c685c;font-weight:500;letter-spacing:0.1px;z-index:40;user-select:none;white-space:nowrap;">
+    <span><b style="color:#2f2a1f;font-weight:700;">Click</b> empty space to add text</span>
+    <span style="opacity:0.4;">·</span>
+    <span><b style="color:#2f2a1f;font-weight:700;">Double-click</b> to edit</span>
+    <span style="opacity:0.4;">·</span>
+    <span><b style="color:#2f2a1f;font-weight:700;">Drag</b> to move</span>
+    <span style="opacity:0.4;">·</span>
+    <span><b style="color:#2f2a1f;font-weight:700;">⌫</b> delete</span>
+    <span style="opacity:0.4;">·</span>
+    <span><b style="color:#2f2a1f;font-weight:700;">⌘D</b> duplicate</span>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:&quot;100%&quot;,&quot;height&quot;:&quot;100%&quot;}}">
+class Component extends DCLogic {
+  /* ===================================================================
+   *  toneMap  —  demo Mandarin tone lookup (swap for pinyin-pro later)
+   *  tone: 1 flat · 2 rising · 3 fold(V) · 4 falling · 0 neutral
+   * =================================================================== */
+  static TONE_MAP = {
+    '主':3,'题':2,'纹':2,'理':3,'设':4,'计':4,'逻':2,'辑':2,'整':3,
+    '今':1,'天':1,'我':3,'想':3,'学':2,'习':2,'中':1,'文':2,'声':1,
+    '调':4,'它':1,'像':4,'一':1,'条':2,'隐':3,'藏':2,'的':0,'旋':2,
+    '律':4,'你':3,'好':3,'不':4,'是':4,'规':1,'则':2,'也':3,'说':1,
+    '话':4,'里':3,'光':1,'线':4,'波':1,'浪':4,'旋':2,'隐':3,'藏':2,
+    '设':4,'计':4,'像':4,'条':2,'律':4,'光':1
+  };
+
+  // detectTone — returns {tone, kind}. kind: hanzi | neutral | punct | space
+  detectTone(ch) {
+    if (ch === ' ' || ch === '\t') return { tone: 0, kind: 'space' };
+    if (/[，。、；：？！,.\u2026\u201c\u201d“”‘’（）()]/.test(ch)) return { tone: 0, kind: 'punct' };
+    const m = Component.TONE_MAP;
+    if (Object.prototype.hasOwnProperty.call(m, ch)) {
+      const t = m[ch];
+      return { tone: t, kind: t === 0 ? 'neutral' : 'hanzi' };
+    }
+    // deterministic fallback for unknown Hanzi (1..4 from codepoint)
+    const t = (ch.charCodeAt(0) % 4) + 1;
+    return { tone: t, kind: 'hanzi' };
+  }
+
+  /* ===================================================================
+   *  toneGeometry  —  each Hanzi owns a segment; next start === prev end.
+   *  Using SVG skewY so end = (x+advance, y+deltaY) holds EXACTLY.
+   * =================================================================== */
+  metrics() {
+    const poster = this.state.mode === 'poster';
+    const FS = poster ? 76 : 62;          // glyph size
+    const ADV = FS * 0.9;                 // horizontal advance (cell width)
+    const SLOPE = 0.5;                    // |deltaY| / advance  for tone 2/4
+    const FOLD_ANGLE = 30;                // tone 3 half-skew angle (deg)
+    const LINE_GAP = FS * 2.45;
+    return { poster, FS, ADV, SLOPE, FOLD_ANGLE, LINE_GAP };
+  }
+
+  // Lay out one line of text starting at (ox, oy). Returns specs + bbox of points.
+  layoutLine(line, ox, oy, M) {
+    const { FS, ADV, SLOPE, FOLD_ANGLE } = M;
+    const specs = [];
+    let x = ox, y = oy;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      const info = this.detectTone(ch);
+      if (info.kind === 'space') { x += ADV * 0.45; continue; }
+      const adv = info.kind === 'punct' ? ADV * 0.55 : ADV;
+
+      if (info.tone === 3 && info.kind === 'hanzi') {
+        // fold: start -> valley(mid, +dip) -> end(+adv, 0).  net deltaY = 0
+        const angle = FOLD_ANGLE;
+        const dip = (adv / 2) * Math.tan(angle * Math.PI / 180);
+        specs.push({ key: i, kind: 'fold', ch, sx: x, sy: y, adv, dip, angle });
+        x += adv; // y unchanged
+      } else {
+        let dy = 0;
+        if (info.tone === 2) dy = -SLOPE * adv;       // rising  (higher = smaller y)
+        else if (info.tone === 4) dy = SLOPE * adv;   // falling
+        const angle = Math.atan2(dy, adv) * 180 / Math.PI;
+        specs.push({
+          key: i, kind: 'normal', ch, sx: x, sy: y, adv, dy, angle,
+          neutral: info.kind === 'neutral', punct: info.kind === 'punct'
+        });
+        x += adv; y += dy;
+      }
+    }
+    return { specs, endX: x };
+  }
+
+  layoutBlock(text, M) {
+    const lines = (text || '').split('\n');
+    const all = [];
+    lines.forEach((ln, li) => {
+      const r = this.layoutLine(ln, 0, li * M.LINE_GAP, M);
+      r.specs.forEach(s => { s.line = li; all.push(s); });
+    });
+    // bbox over segment points + glyph extent
+    const pad = M.FS * 0.72 + (M.poster ? 14 : 4);
+    let minX = 0, minY = 0, maxX = M.FS, maxY = 0;
+    if (all.length) {
+      minX = Infinity; minY = Infinity; maxX = -Infinity; maxY = -Infinity;
+      for (const s of all) {
+        const ys = s.kind === 'fold' ? [s.sy, s.sy + s.dip] : [s.sy, s.sy + s.dy];
+        minX = Math.min(minX, s.sx); maxX = Math.max(maxX, s.sx + s.adv);
+        for (const yy of ys) { minY = Math.min(minY, yy); maxY = Math.max(maxY, yy); }
+      }
+    }
+    return { specs: all, bbox: { x: minX - pad, y: minY - pad, w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2 } };
+  }
+
+  /* ===================================================================
+   *  ToneRenderer  —  SVG glyph following its segment
+   * =================================================================== */
+  glyphText(spec, fontSize, fill, opacity, M) {
+    return React.createElement('text', {
+      x: spec.adv / 2, y: 0, textAnchor: 'middle', dominantBaseline: 'central',
+      fontFamily: "'Noto Sans SC', sans-serif",
+      fontWeight: M.poster ? 900 : 700,
+      fontSize, fill, fillOpacity: opacity
+    }, spec.ch);
+  }
+
+  // returns array of svg nodes for one glyph (face only), at given fill/opacity, optional offset
+  glyphFace(spec, fill, opacity, off, M, idBase, clipId) {
+    const ox = off ? off[0] : 0, oy = off ? off[1] : 0;
+    const FS = M.FS;
+    if (spec.kind === 'fold') {
+      // tone 3 (dip): two oppositely-skewed copies of the SAME glyph, each masked
+      // to one half. Left half skews +angle (pivot at start), right half skews
+      // -angle (pivot at end), so both halves meet at the centre valley and stick
+      // together as a single folded hanzi.
+      const a = spec.angle, adv = spec.adv;
+      return React.createElement('g', {
+        key: idBase, transform: `translate(${spec.sx + ox},${spec.sy + oy})`
+      },
+        React.createElement('g', { key: 'L', clipPath: `url(#${clipId}-L)` },
+          React.createElement('g', { transform: `skewY(${a})` },
+            this.glyphText(spec, FS, fill, opacity, M))),
+        React.createElement('g', { key: 'R', clipPath: `url(#${clipId}-R)` },
+          React.createElement('g', { transform: `translate(${adv},0) skewY(${-a}) translate(${-adv},0)` },
+            this.glyphText(spec, FS, fill, opacity, M)))
+      );
+    }
+    const fs = spec.neutral ? FS * 0.6 : FS;
+    const op = spec.neutral ? opacity * 0.6 : (spec.punct ? opacity * 0.85 : opacity);
+    return React.createElement('g', {
+      key: idBase, transform: `translate(${spec.sx + ox},${spec.sy + oy}) skewY(${spec.angle})`
+    }, this.glyphText(spec, fs, fill, op, M));
+  }
+
+  // two half-masks for a fold glyph, split at the cell centre (cell-local space,
+  // so every skewed/extruded copy shares the same seam).
+  foldClips(spec, idBase, M) {
+    const FS = M.FS, cx = spec.adv / 2, y = -2 * FS, h = 4 * FS, w = 3 * FS;
+    return [
+      React.createElement('clipPath', { key: idBase + '-L', id: idBase + '-L', clipPathUnits: 'userSpaceOnUse' },
+        React.createElement('rect', { x: cx - w, y, width: w, height: h })),
+      React.createElement('clipPath', { key: idBase + '-R', id: idBase + '-R', clipPathUnits: 'userSpaceOnUse' },
+        React.createElement('rect', { x: cx, y, width: w, height: h }))
+    ];
+  }
+
+  debugFrame(spec, idBase, M) {
+    const FS = M.FS, blue = '#2f6bff', red = '#ff5a3c';
+    const dot = (cx, cy, c) => React.createElement('circle', { key: idBase + c + cx + cy, cx, cy, r: 4.5, fill: '#fff', stroke: c, strokeWidth: 2 });
+    const els = [];
+    if (spec.kind === 'fold') {
+      const vx = spec.sx + spec.adv / 2, vy = spec.sy + spec.dip, ex = spec.sx + spec.adv, ey = spec.sy;
+      els.push(React.createElement('polyline', { key: idBase + 'seg', points: `${spec.sx},${spec.sy} ${vx},${vy} ${ex},${ey}`, fill: 'none', stroke: blue, strokeWidth: 1.6, strokeDasharray: '5 4' }));
+      els.push(React.createElement('rect', { key: idBase + 'cell', x: spec.sx, y: vy - FS / 2, width: spec.adv, height: FS, fill: 'none', stroke: red, strokeWidth: 1, strokeOpacity: 0.55 }));
+      els.push(dot(spec.sx, spec.sy, blue)); els.push(dot(vx, vy, '#10b07a')); els.push(dot(ex, ey, blue));
+    } else {
+      const ex = spec.sx + spec.adv, ey = spec.sy + spec.dy;
+      els.push(React.createElement('line', { key: idBase + 'seg', x1: spec.sx, y1: spec.sy, x2: ex, y2: ey, stroke: blue, strokeWidth: 1.6, strokeDasharray: '5 4' }));
+      els.push(React.createElement('g', { key: idBase + 'cell', transform: `translate(${spec.sx},${spec.sy}) skewY(${spec.angle})` },
+        React.createElement('rect', { x: 0, y: -FS / 2, width: spec.adv, height: FS, fill: 'none', stroke: red, strokeWidth: 1, strokeOpacity: 0.5 })));
+      els.push(dot(spec.sx, spec.sy, blue)); els.push(dot(ex, ey, blue));
+    }
+    return els;
+  }
+
+  renderBlockSvg(block, M) {
+    const lay = this.layoutBlock(block.text, M);
+    const { bbox, specs } = lay;
+    const defs = [], shadow = [], faces = [], frames = [];
+    const poster = M.poster;
+    const faceFill = '#161410';
+    specs.forEach(s => {
+      const id = `g-${block.id}-${s.line}-${s.key}`;
+      if (s.kind === 'fold') this.foldClips(s, id, M).forEach(d => defs.push(d));
+      if (poster) {
+        const depth = 7;
+        for (let k = depth; k >= 1; k--) {
+          const t = k / depth;
+          const fill = `rgb(${Math.round(150 - t * 30)},${Math.round(146 - t * 30)},${Math.round(136 - t * 28)})`;
+          shadow.push(this.glyphFace(s, fill, 1, [-1.25 * k, 1.4 * k], M, id + '-s' + k, id));
+        }
+      }
+      faces.push(this.glyphFace(s, faceFill, 1, null, M, id + '-f', id));
+      if (this.state.showFrames) this.debugFrame(s, id, M).forEach(f => frames.push(f));
+    });
+    return React.createElement('svg', {
+      width: bbox.w, height: bbox.h, viewBox: `${bbox.x} ${bbox.y} ${bbox.w} ${bbox.h}`,
+      style: { display: 'block', overflow: 'visible', pointerEvents: 'none' }
+    },
+      React.createElement('defs', { key: 'defs' }, defs),
+      shadow.length ? React.createElement('g', { key: 'sh' }, shadow) : null,
+      React.createElement('g', { key: 'fc' }, faces),
+      frames.length ? React.createElement('g', { key: 'fr' }, frames) : null
+    ) ;
+  }
+
+  /* ===================================================================
+   *  Canvas state + interaction
+   * =================================================================== */
+  state = {
+    blocks: [
+      { id: 1, x: 150, y: 250, text: '今天我想学习中文声调，\n它像一条隐藏的旋律。' },
+      { id: 2, x: 250, y: 620, text: '设计声调像一条波浪' }
+    ],
+    selectedId: 1,
+    editingId: null,
+    mode: 'poster',
+    showFrames: false,
+    panX: 0, panY: 0
+  };
+  _nextId = 3;
+  _act = null; // active pointer action
+
+  componentDidMount() {
+    this._onMove = (e) => this.onMove(e);
+    this._onUp = (e) => this.onUp(e);
+    this._onKey = (e) => this.onKey(e);
+    window.addEventListener('mousemove', this._onMove);
+    window.addEventListener('mouseup', this._onUp);
+    window.addEventListener('keydown', this._onKey);
+  }
+  componentWillUnmount() {
+    window.removeEventListener('mousemove', this._onMove);
+    window.removeEventListener('mouseup', this._onUp);
+    window.removeEventListener('keydown', this._onKey);
+  }
+
+  onBgDown(e) {
+    if (e.button !== 0) return;
+    this._act = { type: 'maybe-pan', sx: e.clientX, sy: e.clientY, px: this.state.panX, py: this.state.panY, moved: false };
+  }
+  onBlockDown(e, id) {
+    if (e.button !== 0) return;
+    if (this.state.editingId === id) return; // let textarea handle
+    e.stopPropagation();
+    const b = this.state.blocks.find(b => b.id === id);
+    this.setState({ selectedId: id });
+    this._act = { type: 'maybe-drag', id, sx: e.clientX, sy: e.clientY, ox: b.x, oy: b.y, moved: false };
+  }
+  onMove(e) {
+    const a = this._act; if (!a) return;
+    const dx = e.clientX - a.sx, dy = e.clientY - a.sy;
+    if (!a.moved && Math.hypot(dx, dy) < 4) return;
+    a.moved = true;
+    if (a.type === 'maybe-pan' || a.type === 'pan') {
+      a.type = 'pan';
+      this.setState({ panX: a.px + dx, panY: a.py + dy });
+    } else {
+      a.type = 'drag';
+      this.setState(s => ({ blocks: s.blocks.map(b => b.id === a.id ? { ...b, x: a.ox + dx, y: a.oy + dy } : b) }));
+    }
+  }
+  onUp(e) {
+    const a = this._act; this._act = null; if (!a) return;
+    if (a.type === 'maybe-pan') {
+      // a plain click on empty canvas -> create a block here
+      const wx = e.clientX - this.state.panX, wy = e.clientY - this.state.panY;
+      const id = this._nextId++;
+      this.setState(s => ({
+        blocks: [...s.blocks, { id, x: wx - 20, y: wy, text: '' }],
+        selectedId: id, editingId: id
+      }));
+    } else if (a.type === 'maybe-drag') {
+      // simple click on a block -> just selected (already set)
+    }
+  }
+  finishEdit(id) {
+    // drop the block entirely if it was left empty
+    this.setState(s => {
+      const b = s.blocks.find(b => b.id === id);
+      const empty = !b || !b.text || !b.text.trim();
+      return {
+        editingId: s.editingId === id ? null : s.editingId,
+        blocks: empty ? s.blocks.filter(b => b.id !== id) : s.blocks,
+        selectedId: empty && s.selectedId === id ? null : s.selectedId
+      };
+    });
+  }
+  onKey(e) {
+    const { selectedId, editingId } = this.state;
+    if (editingId != null) {
+      if (e.key === 'Escape') { e.preventDefault(); this.finishEdit(editingId); }
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'd' || e.key === 'D')) {
+      e.preventDefault(); this.duplicate(); return;
+    }
+    if ((e.key === 'Backspace' || e.key === 'Delete') && selectedId != null) {
+      e.preventDefault(); this.del(); return;
+    }
+    if (e.key === 'Enter' && selectedId != null) { e.preventDefault(); this.setState({ editingId: selectedId }); }
+  }
+
+  duplicate() {
+    const b = this.state.blocks.find(b => b.id === this.state.selectedId); if (!b) return;
+    const id = this._nextId++;
+    this.setState(s => ({ blocks: [...s.blocks, { ...b, id, x: b.x + 34, y: b.y + 34 }], selectedId: id }));
+  }
+  del() {
+    const id = this.state.selectedId;
+    this.setState(s => ({ blocks: s.blocks.filter(b => b.id !== id), selectedId: null, editingId: null }));
+  }
+  editText(id, v) {
+    this.setState(s => ({ blocks: s.blocks.map(b => b.id === id ? { ...b, text: v } : b) }));
+  }
+
+  /* ===================================================================
+   *  render
+   * =================================================================== */
+  renderBlockNode(block, M) {
+    const lay = this.layoutBlock(block.text, M);
+    const { bbox } = lay;
+    const screenX = block.x + this.state.panX, screenY = block.y + this.state.panY;
+    const selected = this.state.selectedId === block.id;
+    const editing = this.state.editingId === block.id;
+    const empty = !block.text;
+    const left = screenX + bbox.x, top = screenY + bbox.y;
+
+    const children = [];
+    // selection frame
+    if (selected) {
+      children.push(React.createElement('div', {
+        key: 'sel', style: {
+          position: 'absolute', inset: '-2px', border: '1.5px solid #2f6bff',
+          borderRadius: '3px', pointerEvents: 'none', boxShadow: '0 0 0 4px rgba(47,107,255,0.08)'
+        }
+      }));
+      ['-7px -7px', '-7px auto auto calc(100% - 7px)'].forEach(() => {});
+      const corner = (s) => React.createElement('div', { key: 'c' + s.left + s.top, style: { position: 'absolute', width: '9px', height: '9px', background: '#fff', border: '1.5px solid #2f6bff', borderRadius: '2px', ...s } });
+      children.push(corner({ left: '-6px', top: '-6px' }));
+      children.push(corner({ right: '-6px', top: '-6px' }));
+      children.push(corner({ left: '-6px', bottom: '-6px' }));
+      children.push(corner({ right: '-6px', bottom: '-6px' }));
+      // mini toolbar
+      children.push(React.createElement('div', {
+        key: 'tb', style: {
+          position: 'absolute', left: '50%', top: '-40px', transform: 'translateX(-50%)',
+          display: 'flex', gap: '2px', padding: '4px', background: '#fff',
+          border: '1px solid rgba(20,18,12,0.10)', borderRadius: '9px',
+          boxShadow: '0 6px 20px rgba(20,18,12,0.14)', pointerEvents: 'auto', whiteSpace: 'nowrap'
+        },
+        onMouseDown: (e) => e.stopPropagation()
+      },
+        React.createElement('button', { key: 'e', onClick: () => this.setState({ editingId: block.id }), style: this.miniBtn() }, 'Edit'),
+        React.createElement('button', { key: 'd', onClick: () => this.duplicate(), style: this.miniBtn() }, 'Duplicate'),
+        React.createElement('button', { key: 'x', onClick: () => this.del(), style: { ...this.miniBtn(), color: '#d23b3b' } }, 'Delete')
+      ));
+    }
+    // the glyph svg / placeholder
+    if (empty && !editing) {
+      children.push(React.createElement('div', {
+        key: 'ph', style: { padding: '14px 20px', color: '#a8a395', fontSize: '15px', fontWeight: 500, fontStyle: 'italic', whiteSpace: 'nowrap' }
+      }, '输入中文… type or paste'));
+    } else {
+      children.push(React.createElement('div', { key: 'svg', style: { position: 'absolute', left: 0, top: 0 } }, this.renderBlockSvg(block, M)));
+    }
+
+    const blockDiv = React.createElement('div', {
+      key: 'blk-' + block.id,
+      onMouseDown: (e) => this.onBlockDown(e, block.id),
+      onDoubleClick: (e) => { e.stopPropagation(); this.setState({ editingId: block.id, selectedId: block.id }); },
+      style: {
+        position: 'absolute', left: left + 'px', top: top + 'px',
+        width: (empty && !editing ? 240 : bbox.w) + 'px',
+        height: (empty && !editing ? 50 : bbox.h) + 'px',
+        cursor: this._act && this._act.type === 'drag' ? 'grabbing' : 'grab',
+        zIndex: selected ? 20 : 10
+      }
+    }, children);
+
+    // editing textarea (sibling overlay, not clipped)
+    let editor = null;
+    if (editing) {
+      const taW = Math.max(280, bbox.w);
+      editor = React.createElement('textarea', {
+        key: 'ta-' + block.id, autoFocus: true,
+        value: block.text,
+        onChange: (e) => this.editText(block.id, e.target.value),
+        onMouseDown: (e) => e.stopPropagation(),
+        onBlur: () => this.finishEdit(block.id),
+        spellCheck: false,
+        style: {
+          position: 'absolute',
+          left: (left + bbox.w / 2 - taW / 2) + 'px',
+          top: (top + bbox.h + 12) + 'px',
+          minWidth: '280px', width: taW + 'px', height: '52px',
+          padding: '10px 13px', fontSize: '17px', fontWeight: 500, lineHeight: 1.3,
+          color: '#17150f', background: 'rgba(255,255,255,0.97)', resize: 'none',
+          border: '1.5px solid #2f6bff', borderRadius: '10px', outline: 'none',
+          boxShadow: '0 10px 30px rgba(47,107,255,0.18)', zIndex: 30,
+          fontFamily: "'Noto Sans SC', sans-serif"
+        }
+      });
+    }
+    return React.createElement(React.Fragment, { key: 'f-' + block.id }, blockDiv, editor);
+  }
+
+  miniBtn() {
+    return { padding: '5px 10px', fontSize: '12px', fontWeight: 600, color: '#211e16', background: 'transparent', border: 'none', borderRadius: '6px', cursor: 'pointer' };
+  }
+
+  renderVals() {
+    const M = this.metrics();
+    const gridPos = `${this.state.panX}px ${this.state.panY}px`;
+
+    const grid = React.createElement('div', {
+      key: 'grid', style: {
+        position: 'absolute', inset: 0, pointerEvents: 'none',
+        backgroundColor: '#f3f1ec',
+        backgroundImage: 'radial-gradient(rgba(20,18,12,0.10) 1.1px, transparent 1.1px)',
+        backgroundSize: '26px 26px', backgroundPosition: gridPos
+      }
+    });
+    const bg = React.createElement('div', {
+      key: 'bg', onMouseDown: (e) => this.onBgDown(e),
+      style: { position: 'absolute', inset: 0, cursor: this._act && this._act.type === 'pan' ? 'grabbing' : 'default' }
+    });
+
+    const blockNodes = this.state.blocks.map(b => this.renderBlockNode(b, M));
+
+    const canvasContent = React.createElement('div', { style: { position: 'absolute', inset: 0 } },
+      grid, bg, blockNodes
+    );
+
+    // toolbar toggle styles
+    const seg = (active) => ({
+      padding: '7px 15px', fontSize: '12.5px', fontWeight: 600, borderRadius: '7px', border: 'none',
+      cursor: 'pointer', transition: 'all .12s',
+      color: active ? '#fff' : '#5b5648',
+      background: active ? '#1c1a14' : 'transparent',
+      boxShadow: active ? '0 1px 3px rgba(20,18,12,0.25)' : 'none'
+    });
+    const framesActive = this.state.showFrames;
+    const framesBtnStyle = {
+      display: 'flex', alignItems: 'center', gap: '5px', padding: '7px 11px',
+      fontSize: '12.5px', fontWeight: 600, borderRadius: '9px', cursor: 'pointer',
+      color: framesActive ? '#2f6bff' : '#5b5648',
+      background: framesActive ? 'rgba(47,107,255,0.10)' : 'transparent',
+      border: framesActive ? '1px solid rgba(47,107,255,0.30)' : '1px solid transparent'
+    };
+
+    return {
+      canvasContent,
+      readBtnStyle: seg(this.state.mode === 'read'),
+      posterBtnStyle: seg(this.state.mode === 'poster'),
+      framesBtnStyle,
+      setRead: () => this.setState({ mode: 'read' }),
+      setPoster: () => this.setState({ mode: 'poster' }),
+      toggleFrames: () => this.setState(s => ({ showFrames: !s.showFrames })),
+      addSample: () => {
+        const samples = [
+          '主题纹理设计逻辑',
+          '你好，声调不是规则，\n也是说话里的光线。',
+          '今天我想学习中文声调'
+        ];
+        const txt = samples[this._nextId % samples.length];
+        const id = this._nextId++;
+        const cx = (window.innerWidth / 2) - this.state.panX - 150;
+        const cy = (window.innerHeight / 2) - this.state.panY;
+        this.setState(s => ({ blocks: [...s.blocks, { id, x: cx, y: cy, text: txt }], selectedId: id }));
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>
