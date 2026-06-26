@@ -10,7 +10,7 @@
 <helmet>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@100..900&display=swap" rel="stylesheet">
 <style>
   html,body{margin:0;padding:0;height:100%;background:#f3f1ec;}
   *{box-sizing:border-box;}
@@ -29,10 +29,17 @@
       <span style="font-size:13px;font-weight:600;letter-spacing:-0.2px;color:#211e16;">Tone&nbsp;Canvas</span>
     </div>
     <div style="width:1px;height:22px;background:rgba(20,18,12,0.10);margin:0 2px;"></div>
-    <div style="display:flex;padding:3px;background:rgba(20,18,12,0.05);border-radius:9px;gap:2px;">
-      <button onClick="{{ setRead }}" style="{{ readBtnStyle }}">Read</button>
-      <button onClick="{{ setPoster }}" style="{{ posterBtnStyle }}">Poster</button>
+    <label style="display:flex;align-items:center;gap:7px;padding:4px 6px;cursor:pointer;" title="Text color">
+      <span style="font-size:12.5px;font-weight:600;color:#5b5648;">Color</span>
+      <input type="color" value="{{ colorVal }}" onInput="{{ setColor }}" style="width:24px;height:24px;border:1px solid rgba(20,18,12,0.12);border-radius:7px;background:none;cursor:pointer;padding:0;">
+    </label>
+    <div style="width:1px;height:22px;background:rgba(20,18,12,0.10);margin:0 2px;"></div>
+    <div style="display:flex;align-items:center;gap:8px;padding:0 4px;" title="Font weight">
+      <span style="font-size:12.5px;font-weight:600;color:#5b5648;">Weight</span>
+      <input type="range" min="100" max="900" step="10" value="{{ weightVal }}" onInput="{{ setWeight }}" style="width:88px;cursor:pointer;accent-color:#1c1a14;">
+      <span style="font-size:11.5px;font-weight:700;color:#211e16;width:26px;text-align:right;font-variant-numeric:tabular-nums;">{{ weightVal }}</span>
     </div>
+    <div style="width:1px;height:22px;background:rgba(20,18,12,0.10);margin:0 2px;"></div>
     <button onClick="{{ toggleFrames }}" style="{{ framesBtnStyle }}">
       <span style="font-size:13px;line-height:1;">◇</span> Tone&nbsp;frames
     </button>
@@ -69,14 +76,37 @@ class Component extends DCLogic {
     '设':4,'计':4,'像':4,'条':2,'律':4,'光':1
   };
 
-  // detectTone — returns {tone, kind}. kind: hanzi | neutral | punct | space
-  detectTone(ch) {
+  // lineTones — context-aware tone numbers for a whole line via pinyin-pro.
+  // Returns an array aligned 1:1 with the line's characters, or null when the
+  // library isn't loaded yet (we fall back to the demo map until then).
+  lineTones(line) {
+    const P = (typeof window !== 'undefined') ? window.pinyinPro : null;
+    if (!P || !line) return null;
+    try {
+      const arr = P.pinyin(line, { type: 'all' });
+      return (Array.isArray(arr) && arr.length === line.length) ? arr : null;
+    } catch (e) { return null; }
+  }
+
+  // detectTone — returns {tone, kind}. kind: hanzi | neutral | punct | space.
+  // `pz` is the pinyin-pro per-character result (or null before it loads).
+  // NOTE: 轻声 (neutral / tone 0) is treated as first tone for now.
+  detectTone(ch, pz) {
     if (ch === ' ' || ch === '\t') return { tone: 0, kind: 'space' };
     if (/[，。、；：？！,.\u2026\u201c\u201d“”‘’（）()]/.test(ch)) return { tone: 0, kind: 'punct' };
+    if (pz) {
+      if (pz.isZh) {
+        let t = parseInt(pz.num, 10);
+        if (isNaN(t) || t === 0) t = 1;        // 轻声 -> first tone for now
+        return { tone: t, kind: 'hanzi' };
+      }
+      return { tone: 1, kind: 'hanzi' };        // latin / digits -> flat
+    }
+    // ---- fallback before pinyin-pro is available ----
     const m = Component.TONE_MAP;
     if (Object.prototype.hasOwnProperty.call(m, ch)) {
       const t = m[ch];
-      return { tone: t, kind: t === 0 ? 'neutral' : 'hanzi' };
+      return { tone: t === 0 ? 1 : t, kind: 'hanzi' };  // neutral -> first tone
     }
     // deterministic fallback for unknown Hanzi (1..4 from codepoint)
     const t = (ch.charCodeAt(0) % 4) + 1;
@@ -88,23 +118,23 @@ class Component extends DCLogic {
    *  Using SVG skewY so end = (x+advance, y+deltaY) holds EXACTLY.
    * =================================================================== */
   metrics() {
-    const poster = this.state.mode === 'poster';
-    const FS = poster ? 76 : 62;          // glyph size
+    const FS = 70;                        // glyph size
     const ADV = FS * 0.9;                 // horizontal advance (cell width)
     const SLOPE = 0.5;                    // |deltaY| / advance  for tone 2/4
     const FOLD_ANGLE = 30;                // tone 3 half-skew angle (deg)
     const LINE_GAP = FS * 2.45;
-    return { poster, FS, ADV, SLOPE, FOLD_ANGLE, LINE_GAP };
+    return { FS, ADV, SLOPE, FOLD_ANGLE, LINE_GAP, weight: 700 };
   }
 
   // Lay out one line of text starting at (ox, oy). Returns specs + bbox of points.
   layoutLine(line, ox, oy, M) {
     const { FS, ADV, SLOPE, FOLD_ANGLE } = M;
+    const tones = this.lineTones(line);
     const specs = [];
     let x = ox, y = oy;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
-      const info = this.detectTone(ch);
+      const info = this.detectTone(ch, tones ? tones[i] : null);
       if (info.kind === 'space') { x += ADV * 0.45; continue; }
       const adv = info.kind === 'punct' ? ADV * 0.55 : ADV;
 
@@ -137,7 +167,7 @@ class Component extends DCLogic {
       r.specs.forEach(s => { s.line = li; all.push(s); });
     });
     // bbox over segment points + glyph extent
-    const pad = M.FS * 0.72 + (M.poster ? 14 : 4);
+    const pad = M.FS * 0.72 + 10;
     let minX = 0, minY = 0, maxX = M.FS, maxY = 0;
     if (all.length) {
       minX = Infinity; minY = Infinity; maxX = -Infinity; maxY = -Infinity;
@@ -157,7 +187,7 @@ class Component extends DCLogic {
     return React.createElement('text', {
       x: spec.adv / 2, y: 0, textAnchor: 'middle', dominantBaseline: 'central',
       fontFamily: "'Noto Sans SC', sans-serif",
-      fontWeight: M.poster ? 900 : 700,
+      fontWeight: M.weight,
       fontSize, fill, fillOpacity: opacity
     }, spec.ch);
   }
@@ -183,11 +213,21 @@ class Component extends DCLogic {
             this.glyphText(spec, FS, fill, opacity, M)))
       );
     }
-    const fs = spec.neutral ? FS * 0.6 : FS;
-    const op = spec.neutral ? opacity * 0.6 : (spec.punct ? opacity * 0.85 : opacity);
+    if (spec.neutral) {
+      // 轻声 (neutral tone): same size & colour as the others, but laid flat into the
+      // scene's perspective (Perspective Toolkit: horizontal skew -67, vertical skew
+      // 30). Anchored at its south-west (bottom-left) corner so that corner stays on
+      // the baseline and the glyph leans up-right out of the previous / into the next.
+      const SKX = -67, SKY = 30;
+      return React.createElement('g', {
+        key: idBase,
+        transform: `translate(${spec.sx + ox},${spec.sy + oy}) skewX(${SKX}) skewY(${SKY}) translate(0,${-0.5 * FS})`
+      }, this.glyphText(spec, FS, fill, opacity, M));
+    }
+    const op = spec.punct ? opacity * 0.85 : opacity;
     return React.createElement('g', {
       key: idBase, transform: `translate(${spec.sx + ox},${spec.sy + oy}) skewY(${spec.angle})`
-    }, this.glyphText(spec, fs, fill, op, M));
+    }, this.glyphText(spec, FS, fill, op, M));
   }
 
   // two half-masks for a fold glyph, split at the cell centre (cell-local space,
@@ -222,31 +262,23 @@ class Component extends DCLogic {
   }
 
   renderBlockSvg(block, M) {
-    const lay = this.layoutBlock(block.text, M);
+    // per-block colour + variable-font weight
+    const MB = { ...M, weight: block.weight != null ? block.weight : M.weight };
+    const faceFill = block.color || '#161410';
+    const lay = this.layoutBlock(block.text, MB);
     const { bbox, specs } = lay;
-    const defs = [], shadow = [], faces = [], frames = [];
-    const poster = M.poster;
-    const faceFill = '#161410';
+    const defs = [], faces = [], frames = [];
     specs.forEach(s => {
       const id = `g-${block.id}-${s.line}-${s.key}`;
-      if (s.kind === 'fold') this.foldClips(s, id, M).forEach(d => defs.push(d));
-      if (poster) {
-        const depth = 7;
-        for (let k = depth; k >= 1; k--) {
-          const t = k / depth;
-          const fill = `rgb(${Math.round(150 - t * 30)},${Math.round(146 - t * 30)},${Math.round(136 - t * 28)})`;
-          shadow.push(this.glyphFace(s, fill, 1, [-1.25 * k, 1.4 * k], M, id + '-s' + k, id));
-        }
-      }
-      faces.push(this.glyphFace(s, faceFill, 1, null, M, id + '-f', id));
-      if (this.state.showFrames) this.debugFrame(s, id, M).forEach(f => frames.push(f));
+      if (s.kind === 'fold') this.foldClips(s, id, MB).forEach(d => defs.push(d));
+      faces.push(this.glyphFace(s, faceFill, 1, null, MB, id + '-f', id));
+      if (this.state.showFrames) this.debugFrame(s, id, MB).forEach(f => frames.push(f));
     });
     return React.createElement('svg', {
       width: bbox.w, height: bbox.h, viewBox: `${bbox.x} ${bbox.y} ${bbox.w} ${bbox.h}`,
       style: { display: 'block', overflow: 'visible', pointerEvents: 'none' }
     },
       React.createElement('defs', { key: 'defs' }, defs),
-      shadow.length ? React.createElement('g', { key: 'sh' }, shadow) : null,
       React.createElement('g', { key: 'fc' }, faces),
       frames.length ? React.createElement('g', { key: 'fr' }, frames) : null
     ) ;
@@ -260,106 +292,213 @@ class Component extends DCLogic {
       { id: 1, x: 150, y: 250, text: '今天我想学习中文声调，\n它像一条隐藏的旋律。' },
       { id: 2, x: 250, y: 620, text: '设计声调像一条波浪' }
     ],
-    selectedId: 1,
+    selectedIds: [1],
     editingId: null,
-    mode: 'poster',
     showFrames: false,
-    panX: 0, panY: 0
+    panX: 0, panY: 0, zoom: 1,
+    marquee: null,           // {x, y, w, h} in screen space while box-selecting
+    defColor: '#161410',     // colour + weight applied to new blocks / shown in toolbar
+    defWeight: 700
   };
   _nextId = 3;
-  _act = null; // active pointer action
+  _act = null;   // active pointer action
+  _space = false; // spacebar held -> pan mode
+  _undo = [];
+  _redo = [];
 
   componentDidMount() {
     this._onMove = (e) => this.onMove(e);
     this._onUp = (e) => this.onUp(e);
     this._onKey = (e) => this.onKey(e);
+    this._onKeyUp = (e) => this.onKeyUp(e);
+    this._onWheel = (e) => this.onWheel(e);
     window.addEventListener('mousemove', this._onMove);
     window.addEventListener('mouseup', this._onUp);
     window.addEventListener('keydown', this._onKey);
+    window.addEventListener('keyup', this._onKeyUp);
+    window.addEventListener('wheel', this._onWheel, { passive: false });
+    // Load pinyin-pro for accurate, context-aware tone detection. Until it lands
+    // we render with the demo TONE_MAP fallback, then re-render once available.
+    if (typeof window !== 'undefined' && !window.pinyinPro) {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/pinyin-pro@3/dist/index.js';
+      s.async = true;
+      s.onload = () => this.forceUpdate();
+      document.head.appendChild(s);
+    }
   }
   componentWillUnmount() {
     window.removeEventListener('mousemove', this._onMove);
     window.removeEventListener('mouseup', this._onUp);
     window.removeEventListener('keydown', this._onKey);
+    window.removeEventListener('keyup', this._onKeyUp);
+    window.removeEventListener('wheel', this._onWheel, { passive: false });
   }
 
+  /* ---- coordinate + history helpers ---- */
+  toWorld(cx, cy) {
+    const { panX, panY, zoom } = this.state;
+    return { x: (cx - panX) / zoom, y: (cy - panY) / zoom };
+  }
+  snap() { return JSON.stringify({ blocks: this.state.blocks, selectedIds: this.state.selectedIds }); }
+  pushHistory() { this._undo.push(this.snap()); if (this._undo.length > 120) this._undo.shift(); this._redo = []; }
+  undo() {
+    if (!this._undo.length) return;
+    this._redo.push(this.snap());
+    const s = JSON.parse(this._undo.pop());
+    this.setState({ blocks: s.blocks, selectedIds: s.selectedIds, editingId: null });
+  }
+  redo() {
+    if (!this._redo.length) return;
+    this._undo.push(this.snap());
+    const s = JSON.parse(this._redo.pop());
+    this.setState({ blocks: s.blocks, selectedIds: s.selectedIds, editingId: null });
+  }
+  blockWorldRect(b, M) {
+    const { bbox } = this.layoutBlock(b.text, M);
+    const w = (!b.text ? 240 : bbox.w), h = (!b.text ? 50 : bbox.h);
+    return { x: b.x + bbox.x, y: b.y + bbox.y, w, h };
+  }
+  zoomBy(factor, cx, cy) {
+    this.setState(s => {
+      const z = Math.min(4, Math.max(0.15, s.zoom * factor));
+      const k = z / s.zoom;
+      return { zoom: z, panX: cx - (cx - s.panX) * k, panY: cy - (cy - s.panY) * k };
+    });
+  }
+  startEdit(id) { this._editPre = this.snap(); this._editDirty = false; this.setState({ editingId: id, selectedIds: [id] }); }
+
+  /* ---- pointer interaction ---- */
   onBgDown(e) {
+    if (e.button === 1 || (e.button === 0 && this._space)) {
+      this._act = { type: 'pan', sx: e.clientX, sy: e.clientY, px: this.state.panX, py: this.state.panY, moved: false };
+      return;
+    }
     if (e.button !== 0) return;
-    this._act = { type: 'maybe-pan', sx: e.clientX, sy: e.clientY, px: this.state.panX, py: this.state.panY, moved: false };
+    // left-drag on empty space -> marquee box-select; a plain click adds text
+    this._act = { type: 'maybe-marquee', sx: e.clientX, sy: e.clientY, add: e.shiftKey, base: e.shiftKey ? this.state.selectedIds.slice() : [], moved: false };
+    if (!e.shiftKey && this.state.selectedIds.length) this.setState({ selectedIds: [] });
   }
   onBlockDown(e, id) {
+    if (e.button === 1 || (e.button === 0 && this._space)) return; // let bg pan
     if (e.button !== 0) return;
     if (this.state.editingId === id) return; // let textarea handle
     e.stopPropagation();
-    const b = this.state.blocks.find(b => b.id === id);
-    this.setState({ selectedId: id });
-    this._act = { type: 'maybe-drag', id, sx: e.clientX, sy: e.clientY, ox: b.x, oy: b.y, moved: false };
+    let sel = this.state.selectedIds.slice();
+    if (e.shiftKey) sel = sel.includes(id) ? sel.filter(x => x !== id) : [...sel, id];
+    else if (!sel.includes(id)) sel = [id];
+    this.setState({ selectedIds: sel });
+    const origins = {};
+    this.state.blocks.forEach(b => { if (sel.includes(b.id)) origins[b.id] = { x: b.x, y: b.y }; });
+    this._act = { type: 'maybe-drag', origins, sx: e.clientX, sy: e.clientY, moved: false, preSnap: this.snap() };
   }
   onMove(e) {
     const a = this._act; if (!a) return;
     const dx = e.clientX - a.sx, dy = e.clientY - a.sy;
     if (!a.moved && Math.hypot(dx, dy) < 4) return;
     a.moved = true;
-    if (a.type === 'maybe-pan' || a.type === 'pan') {
-      a.type = 'pan';
+    if (a.type === 'pan') {
       this.setState({ panX: a.px + dx, panY: a.py + dy });
+    } else if (a.type === 'maybe-marquee' || a.type === 'marquee') {
+      a.type = 'marquee';
+      const x = Math.min(a.sx, e.clientX), y = Math.min(a.sy, e.clientY), w = Math.abs(dx), h = Math.abs(dy);
+      const M = this.metrics();
+      const p0 = this.toWorld(x, y), p1 = this.toWorld(x + w, y + h);
+      const hit = this.state.blocks.filter(b => {
+        const r = this.blockWorldRect(b, M);
+        return !(r.x > p1.x || r.x + r.w < p0.x || r.y > p1.y || r.y + r.h < p0.y);
+      }).map(b => b.id);
+      this.setState({ marquee: { x, y, w, h }, selectedIds: a.add ? Array.from(new Set([...a.base, ...hit])) : hit });
     } else {
       a.type = 'drag';
-      this.setState(s => ({ blocks: s.blocks.map(b => b.id === a.id ? { ...b, x: a.ox + dx, y: a.oy + dy } : b) }));
+      const z = this.state.zoom, wdx = dx / z, wdy = dy / z;
+      this.setState(s => ({ blocks: s.blocks.map(b => a.origins[b.id] ? { ...b, x: a.origins[b.id].x + wdx, y: a.origins[b.id].y + wdy } : b) }));
     }
   }
   onUp(e) {
     const a = this._act; this._act = null; if (!a) return;
-    if (a.type === 'maybe-pan') {
-      // a plain click on empty canvas -> create a block here
-      const wx = e.clientX - this.state.panX, wy = e.clientY - this.state.panY;
+    if (a.type === 'maybe-marquee') {
+      // plain click on empty canvas -> create a block here
+      const w = this.toWorld(e.clientX, e.clientY);
       const id = this._nextId++;
-      this.setState(s => ({
-        blocks: [...s.blocks, { id, x: wx - 20, y: wy, text: '' }],
-        selectedId: id, editingId: id
-      }));
-    } else if (a.type === 'maybe-drag') {
-      // simple click on a block -> just selected (already set)
+      this.pushHistory();
+      this._editDirty = true; // creation already recorded; don't double on first keystroke
+      this.setState(s => ({ blocks: [...s.blocks, { id, x: w.x - 20, y: w.y, text: '', color: s.defColor, weight: s.defWeight }], selectedIds: [id], editingId: id }));
+    } else if (a.type === 'marquee') {
+      this.setState({ marquee: null });
+    } else if (a.type === 'drag' && a.moved) {
+      this._undo.push(a.preSnap); if (this._undo.length > 120) this._undo.shift(); this._redo = [];
     }
   }
+  onWheel(e) {
+    e.preventDefault();
+    if (e.ctrlKey || e.metaKey) this.zoomBy(Math.exp(-e.deltaY * 0.0015), e.clientX, e.clientY);
+    else this.setState(s => ({ panX: s.panX - e.deltaX, panY: s.panY - e.deltaY }));
+  }
   finishEdit(id) {
-    // drop the block entirely if it was left empty
     this.setState(s => {
       const b = s.blocks.find(b => b.id === id);
       const empty = !b || !b.text || !b.text.trim();
       return {
         editingId: s.editingId === id ? null : s.editingId,
         blocks: empty ? s.blocks.filter(b => b.id !== id) : s.blocks,
-        selectedId: empty && s.selectedId === id ? null : s.selectedId
+        selectedIds: empty ? s.selectedIds.filter(x => x !== id) : s.selectedIds
       };
     });
+    this._editDirty = false;
   }
   onKey(e) {
-    const { selectedId, editingId } = this.state;
+    const { editingId, selectedIds } = this.state;
+    const tag = e.target && e.target.tagName;
+    if (e.key === ' ' && editingId == null && !this._space && tag !== 'TEXTAREA' && tag !== 'INPUT') {
+      this._space = true; e.preventDefault(); this.forceUpdate(); return;
+    }
     if (editingId != null) {
       if (e.key === 'Escape') { e.preventDefault(); this.finishEdit(editingId); }
       return;
     }
-    if ((e.metaKey || e.ctrlKey) && (e.key === 'd' || e.key === 'D')) {
-      e.preventDefault(); this.duplicate(); return;
-    }
-    if ((e.key === 'Backspace' || e.key === 'Delete') && selectedId != null) {
-      e.preventDefault(); this.del(); return;
-    }
-    if (e.key === 'Enter' && selectedId != null) { e.preventDefault(); this.setState({ editingId: selectedId }); }
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); e.shiftKey ? this.redo() : this.undo(); return; }
+    if (mod && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); this.redo(); return; }
+    if (mod && (e.key === 'a' || e.key === 'A')) { e.preventDefault(); this.setState(s => ({ selectedIds: s.blocks.map(b => b.id) })); return; }
+    if (mod && (e.key === 'd' || e.key === 'D')) { e.preventDefault(); this.duplicate(); return; }
+    if (mod && e.key === '0') { e.preventDefault(); this.setState({ zoom: 1, panX: 0, panY: 0 }); return; }
+    if (mod && (e.key === '=' || e.key === '+')) { e.preventDefault(); this.zoomBy(1.2, window.innerWidth / 2, window.innerHeight / 2); return; }
+    if (mod && (e.key === '-' || e.key === '_')) { e.preventDefault(); this.zoomBy(1 / 1.2, window.innerWidth / 2, window.innerHeight / 2); return; }
+    if ((e.key === 'Backspace' || e.key === 'Delete') && selectedIds.length) { e.preventDefault(); this.del(); return; }
+    if (e.key === 'Escape') { if (selectedIds.length) this.setState({ selectedIds: [] }); return; }
+    if (e.key === 'Enter' && selectedIds.length === 1) { e.preventDefault(); this.startEdit(selectedIds[0]); }
   }
+  onKeyUp(e) { if (e.key === ' ' && this._space) { this._space = false; this.forceUpdate(); } }
 
   duplicate() {
-    const b = this.state.blocks.find(b => b.id === this.state.selectedId); if (!b) return;
-    const id = this._nextId++;
-    this.setState(s => ({ blocks: [...s.blocks, { ...b, id, x: b.x + 34, y: b.y + 34 }], selectedId: id }));
+    const sel = this.state.selectedIds;
+    const src = this.state.blocks.filter(b => sel.includes(b.id));
+    if (!src.length) return;
+    this.pushHistory();
+    const newIds = [];
+    const news = src.map(b => { const id = this._nextId++; newIds.push(id); return { ...b, id, x: b.x + 34, y: b.y + 34 }; });
+    this.setState(s => ({ blocks: [...s.blocks, ...news], selectedIds: newIds }));
   }
   del() {
-    const id = this.state.selectedId;
-    this.setState(s => ({ blocks: s.blocks.filter(b => b.id !== id), selectedId: null, editingId: null }));
+    const sel = this.state.selectedIds; if (!sel.length) return;
+    this.pushHistory();
+    this.setState(s => ({ blocks: s.blocks.filter(b => !sel.includes(b.id)), selectedIds: [], editingId: null }));
   }
   editText(id, v) {
+    if (!this._editDirty) { this._undo.push(this._editPre || this.snap()); if (this._undo.length > 120) this._undo.shift(); this._redo = []; this._editDirty = true; }
     this.setState(s => ({ blocks: s.blocks.map(b => b.id === id ? { ...b, text: v } : b) }));
+  }
+  // apply a colour / weight patch to the selected blocks (and remember as default)
+  applyStyle(patch) {
+    this.setState(s => {
+      const def = {};
+      if ('color' in patch) def.defColor = patch.color;
+      if ('weight' in patch) def.defWeight = patch.weight;
+      const ids = s.selectedIds;
+      if (!ids.length) return def;
+      return { ...def, blocks: s.blocks.map(b => ids.includes(b.id) ? { ...b, ...patch } : b) };
+    });
   }
 
   /* ===================================================================
@@ -368,11 +507,11 @@ class Component extends DCLogic {
   renderBlockNode(block, M) {
     const lay = this.layoutBlock(block.text, M);
     const { bbox } = lay;
-    const screenX = block.x + this.state.panX, screenY = block.y + this.state.panY;
-    const selected = this.state.selectedId === block.id;
+    // positioned in WORLD space — the world container applies pan + zoom.
+    const selected = this.state.selectedIds.includes(block.id);
     const editing = this.state.editingId === block.id;
     const empty = !block.text;
-    const left = screenX + bbox.x, top = screenY + bbox.y;
+    const left = block.x + bbox.x, top = block.y + bbox.y;
 
     const children = [];
     // selection frame
@@ -399,7 +538,7 @@ class Component extends DCLogic {
         },
         onMouseDown: (e) => e.stopPropagation()
       },
-        React.createElement('button', { key: 'e', onClick: () => this.setState({ editingId: block.id }), style: this.miniBtn() }, 'Edit'),
+        React.createElement('button', { key: 'e', onClick: () => this.startEdit(block.id), style: this.miniBtn() }, 'Edit'),
         React.createElement('button', { key: 'd', onClick: () => this.duplicate(), style: this.miniBtn() }, 'Duplicate'),
         React.createElement('button', { key: 'x', onClick: () => this.del(), style: { ...this.miniBtn(), color: '#d23b3b' } }, 'Delete')
       ));
@@ -416,12 +555,13 @@ class Component extends DCLogic {
     const blockDiv = React.createElement('div', {
       key: 'blk-' + block.id,
       onMouseDown: (e) => this.onBlockDown(e, block.id),
-      onDoubleClick: (e) => { e.stopPropagation(); this.setState({ editingId: block.id, selectedId: block.id }); },
+      onDoubleClick: (e) => { e.stopPropagation(); this.startEdit(block.id); },
       style: {
         position: 'absolute', left: left + 'px', top: top + 'px',
         width: (empty && !editing ? 240 : bbox.w) + 'px',
         height: (empty && !editing ? 50 : bbox.h) + 'px',
         cursor: this._act && this._act.type === 'drag' ? 'grabbing' : 'grab',
+        pointerEvents: 'auto',
         zIndex: selected ? 20 : 10
       }
     }, children);
@@ -446,6 +586,7 @@ class Component extends DCLogic {
           color: '#17150f', background: 'rgba(255,255,255,0.97)', resize: 'none',
           border: '1.5px solid #2f6bff', borderRadius: '10px', outline: 'none',
           boxShadow: '0 10px 30px rgba(47,107,255,0.18)', zIndex: 30,
+          pointerEvents: 'auto', userSelect: 'text', WebkitUserSelect: 'text',
           fontFamily: "'Noto Sans SC', sans-serif"
         }
       });
@@ -459,35 +600,49 @@ class Component extends DCLogic {
 
   renderVals() {
     const M = this.metrics();
-    const gridPos = `${this.state.panX}px ${this.state.panY}px`;
+    const { panX, panY, zoom, marquee } = this.state;
+    const cell = 26 * zoom;
 
     const grid = React.createElement('div', {
       key: 'grid', style: {
         position: 'absolute', inset: 0, pointerEvents: 'none',
         backgroundColor: '#f3f1ec',
         backgroundImage: 'radial-gradient(rgba(20,18,12,0.10) 1.1px, transparent 1.1px)',
-        backgroundSize: '26px 26px', backgroundPosition: gridPos
+        backgroundSize: `${cell}px ${cell}px`, backgroundPosition: `${panX}px ${panY}px`
       }
     });
+    const panning = this._act && this._act.type === 'pan';
     const bg = React.createElement('div', {
       key: 'bg', onMouseDown: (e) => this.onBgDown(e),
-      style: { position: 'absolute', inset: 0, cursor: this._act && this._act.type === 'pan' ? 'grabbing' : 'default' }
+      style: { position: 'absolute', inset: 0, cursor: panning ? 'grabbing' : (this._space ? 'grab' : 'default') }
     });
 
-    const blockNodes = this.state.blocks.map(b => this.renderBlockNode(b, M));
+    // world layer: pan + zoom applied once; blocks live in world coordinates.
+    const world = React.createElement('div', {
+      key: 'world', style: {
+        position: 'absolute', left: 0, top: 0, width: 0, height: 0,
+        transformOrigin: '0 0', transform: `translate(${panX}px,${panY}px) scale(${zoom})`,
+        pointerEvents: 'none'
+      }
+    }, this.state.blocks.map(b => this.renderBlockNode(b, M)));
 
-    const canvasContent = React.createElement('div', { style: { position: 'absolute', inset: 0 } },
-      grid, bg, blockNodes
-    );
+    const marqueeEl = marquee ? React.createElement('div', {
+      key: 'mq', style: {
+        position: 'absolute', left: marquee.x + 'px', top: marquee.y + 'px',
+        width: marquee.w + 'px', height: marquee.h + 'px', pointerEvents: 'none',
+        border: '1px solid #2f6bff', background: 'rgba(47,107,255,0.08)', zIndex: 25
+      }
+    }) : null;
 
-    // toolbar toggle styles
-    const seg = (active) => ({
-      padding: '7px 15px', fontSize: '12.5px', fontWeight: 600, borderRadius: '7px', border: 'none',
-      cursor: 'pointer', transition: 'all .12s',
-      color: active ? '#fff' : '#5b5648',
-      background: active ? '#1c1a14' : 'transparent',
-      boxShadow: active ? '0 1px 3px rgba(20,18,12,0.25)' : 'none'
-    });
+    const canvasContent = React.createElement('div', {
+      style: { position: 'absolute', inset: 0, overflow: 'hidden', userSelect: 'none', WebkitUserSelect: 'none' }
+    }, grid, bg, world, marqueeEl);
+
+    // current colour / weight shown in the toolbar = first selected block, else default
+    const sel = this.state.blocks.filter(b => this.state.selectedIds.includes(b.id));
+    const colorVal = sel.length ? (sel[0].color || '#161410') : this.state.defColor;
+    const weightVal = sel.length ? (sel[0].weight != null ? sel[0].weight : 700) : this.state.defWeight;
+
     const framesActive = this.state.showFrames;
     const framesBtnStyle = {
       display: 'flex', alignItems: 'center', gap: '5px', padding: '7px 11px',
@@ -499,11 +654,11 @@ class Component extends DCLogic {
 
     return {
       canvasContent,
-      readBtnStyle: seg(this.state.mode === 'read'),
-      posterBtnStyle: seg(this.state.mode === 'poster'),
       framesBtnStyle,
-      setRead: () => this.setState({ mode: 'read' }),
-      setPoster: () => this.setState({ mode: 'poster' }),
+      colorVal,
+      weightVal,
+      setColor: (e) => this.applyStyle({ color: e && e.target ? e.target.value : e }),
+      setWeight: (e) => this.applyStyle({ weight: parseInt(e && e.target ? e.target.value : e, 10) || 100 }),
       toggleFrames: () => this.setState(s => ({ showFrames: !s.showFrames })),
       addSample: () => {
         const samples = [
@@ -513,9 +668,9 @@ class Component extends DCLogic {
         ];
         const txt = samples[this._nextId % samples.length];
         const id = this._nextId++;
-        const cx = (window.innerWidth / 2) - this.state.panX - 150;
-        const cy = (window.innerHeight / 2) - this.state.panY;
-        this.setState(s => ({ blocks: [...s.blocks, { id, x: cx, y: cy, text: txt }], selectedId: id }));
+        const c = this.toWorld(window.innerWidth / 2, window.innerHeight / 2);
+        this.pushHistory();
+        this.setState(s => ({ blocks: [...s.blocks, { id, x: c.x - 150, y: c.y, text: txt, color: s.defColor, weight: s.defWeight }], selectedIds: [id] }));
       }
     };
   }
