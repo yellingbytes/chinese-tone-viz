@@ -64,7 +64,33 @@
 <script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:&quot;100%&quot;,&quot;height&quot;:&quot;100%&quot;}}">
 class Component extends DCLogic {
   /* ===================================================================
-   *  toneMap  —  demo Mandarin tone lookup (swap for pinyin-pro later)
+   *  TONE CANVAS — dynamic Chinese tone typography engine
+   * -------------------------------------------------------------------
+   *  Each Hanzi is drawn as a geometric "tone segment" inside its own
+   *  advance cell, then the segments are chained so the whole sentence
+   *  reads as one continuous, unbroken wave:
+   *
+   *    tone 1 (flat)    — horizontal segment, net Δy = 0
+   *    tone 2 (rising)  — segment rising left→right (skewY, Δy < 0)
+   *    tone 3 (fold)    — stitched V: two oppositely-skewed half-glyphs,
+   *                       masked at the centre, meeting at the valley
+   *                       seam so it reads as ONE folded character
+   *    tone 4 (falling) — segment falling left→right (skewY, Δy > 0)
+   *    neutral          — light/dependent (currently flattened to tone 1;
+   *                       target geometry is a short soft tail — see spec)
+   *
+   *  EDGE-CONNECTION RULE (the core invention): a character's left edge
+   *  begins at the EXACT y-level where the previous character's right
+   *  edge ended (next.start === prev.end). See layoutLine().
+   *
+   *  WHY SVG: glyphs are sheared with skewY and split/masked with
+   *  <clipPath> so segment endpoints land on exact coordinates; the
+   *  output is resolution-independent and export-friendly (poster/SVG).
+   *
+   *  Tone detection uses pinyin-pro (context-aware, polyphonic + sandhi)
+   *  when loaded, falling back to the demo TONE_MAP below until it does.
+   * -------------------------------------------------------------------
+   *  toneMap — demo lookup, used only as a fallback before pinyin-pro loads
    *  tone: 1 flat · 2 rising · 3 fold(V) · 4 falling · 0 neutral
    * =================================================================== */
   static TONE_MAP = {
@@ -131,6 +157,11 @@ class Component extends DCLogic {
     const { FS, ADV, SLOPE, FOLD_ANGLE } = M;
     const tones = this.lineTones(line);
     const specs = [];
+    // (x, y) is the running pen position = the END point of the previous
+    // glyph's tone segment, and therefore the START of the next one. This is
+    // the edge-connection rule: we never reset y between characters, so the
+    // line stays one continuous wave. tone 2/4 advance y by ±dy; tone 1/3 keep
+    // y (net Δy = 0) but still dip/return within the cell.
     let x = ox, y = oy;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
