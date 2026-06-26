@@ -5,6 +5,15 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## 2026-06-26 — Editor refinements
+
+- Added character **tracking**: 4px between Hanzi, 8px next to punctuation (horizontal
+  only; the wave stays vertically continuous).
+- Disabled **single-click-to-add**; text blocks are now created deliberately.
+- Added a primary **"+ Add Text"** split-button: the main action drops an editable block
+  at screen center; its dropdown offers **"Sample Text"** — a random Mandarin tone
+  fun-fact, varied each time.
+
 ## 2026-06-26 — Concept & geometry documentation
 
 - Documented the **original concept**: Hanzi-as-tone-geometry, a free editable canvas for
