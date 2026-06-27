@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Tone Canvas</string>
+    <string name="title_activity_main">Tone Canvas</string>
+    <string name="package_name">bytes.yelling.tonecanvas</string>
+    <string name="custom_url_scheme">bytes.yelling.tonecanvas</string>
+</resources>
