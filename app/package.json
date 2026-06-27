@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "sync": "npm run build && npx cap sync",
     "ios": "npm run build && npx cap sync ios && npx cap open ios",
-    "android": "npm run build && npx cap sync android && npx cap open android"
+    "android": "npm run build && npx cap sync android && npx cap open android",
+    "deploy": "bash ../scripts/deploy-pages.sh"
   },
   "dependencies": {
     "@capacitor-community/speech-recognition": "^6.0.1",
