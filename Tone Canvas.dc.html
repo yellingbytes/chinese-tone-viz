@@ -268,65 +268,139 @@ class Component extends DCLogic {
     const ADV = FS * 0.9;                 // horizontal advance (cell width)
     const SLOPE = 0.5;                    // |deltaY| / advance  for tone 2/4
     const FOLD_ANGLE = 30;                // tone 3 half-skew angle (deg)
-    const LINE_GAP = FS * 2.45;
+    const LINE_SPACING = FS * 0.55;       // vertical gap BETWEEN stacked lines (see layoutBlock)
     const HANZI_GAP = 4;                  // tracking between adjacent Hanzi (px)
     const PUNCT_GAP = 16;                 // tracking next to a punctuation mark (px)
-    return { FS, ADV, SLOPE, FOLD_ANGLE, LINE_GAP, HANZI_GAP, PUNCT_GAP, weight: 700 };
+    return { FS, ADV, SLOPE, FOLD_ANGLE, LINE_SPACING, HANZI_GAP, PUNCT_GAP, weight: 700 };
   }
 
-  // Lay out one line of text starting at (ox, oy). Returns specs + bbox of points.
-  layoutLine(line, ox, oy, M) {
-    const { FS, ADV, SLOPE, FOLD_ANGLE, HANZI_GAP, PUNCT_GAP } = M;
-    const tones = this.lineTones(line);
-    const specs = [];
-    // (x, y) is the running pen position. y is the END point of the previous
-    // glyph's tone segment, so segments stay on one continuous wave (we never
-    // reset y between characters). x carries a small tracking GAP between
-    // adjacent glyphs — 4px between Hanzi, 8px next to punctuation — so the
-    // characters breathe without breaking the vertical continuity of the wave.
-    let x = ox, y = oy, prevKind = null;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      const info = this.detectTone(ch, tones ? tones[i] : null);
-      if (info.kind === 'space') { x += ADV * 0.45; prevKind = 'space'; continue; }
-      // horizontal tracking gap before this glyph (wider around punctuation)
-      if (prevKind && prevKind !== 'space') {
-        x += (prevKind === 'punct' || info.kind === 'punct') ? PUNCT_GAP : HANZI_GAP;
+  // CJK line-breaking (kinsoku) — characters that may not begin / end a wrapped line.
+  static NO_LINE_START = '，。、；：？！）】》」』〉”’,.;:?!)…%·';   // can't start a line (hang instead)
+  static NO_LINE_END   = '（【《「『〈“‘(';                          // can't end a line (carry down)
+
+  // Break a paragraph's per-char infos into visual sub-lines that fit `wrapWidth`
+  // (layout units). CJK breaks between any two characters; punctuation rules keep
+  // closing marks from starting a line (they hang past the edge) and opening marks
+  // from ending one (they're carried to the next line). wrapWidth=Infinity => no wrap.
+  wrapInfos(text, infos, M, wrapWidth) {
+    const { ADV, HANZI_GAP, PUNCT_GAP } = M;
+    const entries = [];
+    for (let i = 0; i < text.length; i++) entries.push({ ch: text[i], info: infos[i], i });
+    if (!wrapWidth || wrapWidth === Infinity || wrapWidth <= 0) return [entries];
+
+    const advOf = (info) => info.kind === 'punct' ? ADV * 0.55 : ADV;
+    const gapOf = (prevKind, kind) => (prevKind && prevKind !== 'space')
+      ? ((prevKind === 'punct' || kind === 'punct') ? PUNCT_GAP : HANZI_GAP) : 0;
+    const lines = [];
+    let cur = [], x = 0, prevKind = null;
+    const flush = () => { lines.push(cur); cur = []; x = 0; prevKind = null; };
+
+    for (const ent of entries) {
+      const info = ent.info, ch = ent.ch;
+      if (info.kind === 'space') {
+        if (cur.length === 0) continue;                 // drop spaces at the start of a wrapped line
+        const w = ADV * 0.45;
+        if (x + w > wrapWidth) { flush(); continue; }   // a space at the edge just becomes the break
+        x += w; prevKind = 'space'; cur.push(ent); continue;
       }
+      const need = gapOf(prevKind, info.kind) + advOf(info);
+      if (cur.length > 0 && x + need > wrapWidth) {
+        if (Component.NO_LINE_START.indexOf(ch) >= 0) {
+          // closing punctuation: let it hang on this line rather than orphaning it
+        } else {
+          let carry = null;
+          const last = cur[cur.length - 1];
+          if (last && Component.NO_LINE_END.indexOf(last.ch) >= 0 && cur.length > 1) carry = cur.pop();
+          flush();
+          if (carry) { cur.push(carry); x = advOf(carry.info); prevKind = carry.info.kind; }
+        }
+      }
+      x += gapOf(prevKind, info.kind) + advOf(info);
+      prevKind = info.kind; cur.push(ent);
+    }
+    lines.push(cur);
+    return lines;
+  }
+
+  // Lay out one already-broken sub-line of entries at baseline `oy`. Within a line
+  // the pen's y carries continuously so the glyphs read as one unbroken tone wave;
+  // lines are positioned by layoutBlock so they never overlap.
+  layoutSub(entries, oy, M) {
+    const { ADV, SLOPE, FOLD_ANGLE, HANZI_GAP, PUNCT_GAP } = M;
+    const specs = [];
+    let x = 0, y = oy, prevKind = null, key = 0;
+    for (const ent of entries) {
+      const info = ent.info, ch = ent.ch;
+      if (info.kind === 'space') { x += ADV * 0.45; prevKind = 'space'; continue; }
+      if (prevKind && prevKind !== 'space') x += (prevKind === 'punct' || info.kind === 'punct') ? PUNCT_GAP : HANZI_GAP;
       prevKind = info.kind;
       const adv = info.kind === 'punct' ? ADV * 0.55 : ADV;
-
       if (info.tone === 3 && info.kind === 'hanzi') {
-        // fold: start -> valley(mid, +dip) -> end(+adv, 0).  net deltaY = 0
         const angle = FOLD_ANGLE;
         const dip = (adv / 2) * Math.tan(angle * Math.PI / 180);
-        specs.push({ key: i, kind: 'fold', ch, sx: x, sy: y, adv, dip, angle });
-        x += adv; // y unchanged
+        specs.push({ key: key++, kind: 'fold', ch, sx: x, sy: y, adv, dip, angle });
+        x += adv;
       } else {
         let dy = 0;
-        if (info.tone === 2) dy = -SLOPE * adv;       // rising  (higher = smaller y)
-        else if (info.tone === 4) dy = SLOPE * adv;   // falling
+        if (info.tone === 2) dy = -SLOPE * adv;
+        else if (info.tone === 4) dy = SLOPE * adv;
         const angle = Math.atan2(dy, adv) * 180 / Math.PI;
-        specs.push({
-          key: i, kind: 'normal', ch, sx: x, sy: y, adv, dy, angle,
-          neutral: info.kind === 'neutral', punct: info.kind === 'punct'
-        });
+        specs.push({ key: key++, kind: 'normal', ch, sx: x, sy: y, adv, dy, angle, neutral: info.kind === 'neutral', punct: info.kind === 'punct' });
         x += adv; y += dy;
       }
     }
     return { specs, endX: x };
   }
 
-  layoutBlock(text, M) {
-    const lines = (text || '').split('\n');
+  // Lay out a whole block. Paragraphs (split on \n) are tone-detected with full
+  // context for accurate sandhi, then wrapped to `wrapWidth` (layout units; pass
+  // undefined/Infinity for auto width). Because the tone wave drifts vertically as
+  // it flows, each visual line is measured and STACKED below the previous one with
+  // a constant gap — so wrapped or pasted text never overlaps, whatever the tones.
+  layoutBlock(text, M, wrapWidth) {
+    const FS = M.FS;
+    const LINE_SPACING = (M.LINE_SPACING != null) ? M.LINE_SPACING : FS * 0.55;
+    // Three modes: explicit width (user dragged the handle -> fixed-width box),
+    // no-wrap (Infinity, used to measure natural width), and auto. Auto still wraps
+    // at a readable default so long pasted/typed text breaks consistently instead of
+    // running off forever — same wrapping logic, just an automatic measure.
+    const explicit = (typeof wrapWidth === 'number') && wrapWidth > 0 && wrapWidth !== Infinity;
+    const noWrap = wrapWidth === Infinity;
+    const DEFAULT_WRAP = M.ADV * 14;
+    const effW = noWrap ? null : (explicit ? wrapWidth : DEFAULT_WRAP);
+    const doWrap = effW != null;
+    const paras = (text || '').split('\n');
     const all = [];
-    lines.forEach((ln, li) => {
-      const r = this.layoutLine(ln, 0, li * M.LINE_GAP, M);
-      r.specs.forEach(s => { s.line = li; all.push(s); });
-    });
-    // bbox over segment points + glyph extent
-    const pad = M.FS * 0.72 + 10;
-    let minX = 0, minY = 0, maxX = M.FS, maxY = 0;
+    let runningTop = 0, lineCounter = 0;
+
+    for (const para of paras) {
+      const tones = this.lineTones(para);                       // context-aware over the whole paragraph
+      const infos = [];
+      for (let i = 0; i < para.length; i++) infos.push(this.detectTone(para[i], tones ? tones[i] : null));
+      const subLines = this.wrapInfos(para, infos, M, doWrap ? effW : Infinity);
+
+      for (const entries of subLines) {
+        const { specs } = this.layoutSub(entries, 0, M);
+        // vertical extent of this line incl. the glyph body (~±FS/2 around the segment)
+        let lmin = Infinity, lmax = -Infinity;
+        if (specs.length) {
+          for (const s of specs) {
+            const ys = s.kind === 'fold' ? [s.sy, s.sy + s.dip] : [s.sy, s.sy + s.dy];
+            for (const yy of ys) { lmin = Math.min(lmin, yy); lmax = Math.max(lmax, yy); }
+          }
+          lmin -= FS / 2; lmax += FS / 2;
+        } else { lmin = 0; lmax = FS; }                          // empty paragraph -> a blank line
+        const offset = runningTop - lmin;
+        specs.forEach(s => { s.sy += offset; s.line = lineCounter; all.push(s); });
+        runningTop += (lmax - lmin) + LINE_SPACING;
+        lineCounter++;
+      }
+    }
+
+    // bbox over segment points (pad covers the glyph body). A fixed-width box also
+    // spans at least the wrap width so the box + handle sit at the wrap boundary.
+    const pad = FS * 0.72 + 10;
+    let minX = 0, minY = 0, maxX = FS, maxY = 0;
     if (all.length) {
       minX = Infinity; minY = Infinity; maxX = -Infinity; maxY = -Infinity;
       for (const s of all) {
@@ -335,7 +409,13 @@ class Component extends DCLogic {
         for (const yy of ys) { minY = Math.min(minY, yy); maxY = Math.max(maxY, yy); }
       }
     }
-    return { specs: all, bbox: { x: minX - pad, y: minY - pad, w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2 } };
+    const naturalWidth = (maxX - minX);
+    if (explicit) { minX = Math.min(minX, 0); maxX = Math.max(maxX, wrapWidth); }
+    return {
+      specs: all,
+      naturalWidth,
+      bbox: { x: minX - pad, y: minY - pad, w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2 }
+    };
   }
 
   /* ===================================================================
@@ -427,7 +507,7 @@ class Component extends DCLogic {
       fontFamily: this.fontStack(block.font || this.state.defFont, this.state.script)
     };
     const faceFill = block.color || '#161410';
-    const lay = this.layoutBlock(this.glyphsText(block.text), MB);
+    const lay = this.layoutBlock(this.glyphsText(block.text), MB, block.width);
     const { bbox, specs } = lay;
     const defs = [], faces = [], frames = [];
     specs.forEach(s => {
@@ -540,7 +620,7 @@ class Component extends DCLogic {
     this.setState({ blocks: s.blocks, selectedIds: s.selectedIds, editingId: null });
   }
   blockWorldRect(b, M) {
-    const { bbox } = this.layoutBlock(this.glyphsText(b.text), M);
+    const { bbox } = this.layoutBlock(this.glyphsText(b.text), M, b.width);
     const w = (!b.text ? 240 : bbox.w), h = (!b.text ? 50 : bbox.h);
     return { x: b.x + bbox.x, y: b.y + bbox.y, w, h };
   }
@@ -577,6 +657,26 @@ class Component extends DCLogic {
     this.state.blocks.forEach(b => { if (sel.includes(b.id)) origins[b.id] = { x: b.x, y: b.y }; });
     this._act = { type: 'maybe-drag', origins, sx: e.clientX, sy: e.clientY, moved: false, preSnap: this.snap() };
   }
+  // start dragging the right-edge wrap handle (sets block.width in layout units)
+  onResizeDown(e, id) {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const b = this.state.blocks.find(x => x.id === id);
+    if (!b) return;
+    const M = this.metrics();
+    // seed the drag from the box's CURRENT right edge so the handle doesn't jump
+    const lay = this.layoutBlock(this.glyphsText(b.text), M, b.width);
+    const startWidth = (b.width != null) ? b.width : Math.max(M.ADV * 1.2, lay.naturalWidth);
+    this.setState({ selectedIds: [id] });
+    this._act = { type: 'resize', id, sx: e.clientX, startWidth, moved: false, preSnap: this.snap() };
+  }
+  // clear a block's fixed width -> back to auto width (called on handle double-click)
+  resetWidth(id) {
+    const b = this.state.blocks.find(x => x.id === id);
+    if (!b || b.width == null) return;
+    this.pushHistory();
+    this.setState(s => ({ blocks: s.blocks.map(x => { if (x.id !== id) return x; const nb = { ...x }; delete nb.width; return nb; }) }));
+  }
   onMove(e) {
     const a = this._act; if (!a) return;
     const dx = e.clientX - a.sx, dy = e.clientY - a.sy;
@@ -594,6 +694,11 @@ class Component extends DCLogic {
         return !(r.x > p1.x || r.x + r.w < p0.x || r.y > p1.y || r.y + r.h < p0.y);
       }).map(b => b.id);
       this.setState({ marquee: { x, y, w, h }, selectedIds: a.add ? Array.from(new Set([...a.base, ...hit])) : hit });
+    } else if (a.type === 'resize') {
+      const z = this.state.zoom;
+      const MINW = this.metrics().ADV * 1.2;             // ~one character minimum
+      const w = Math.max(MINW, a.startWidth + dx / z);
+      this.setState(s => ({ blocks: s.blocks.map(b => b.id === a.id ? { ...b, width: w } : b) }));
     } else {
       a.type = 'drag';
       const z = this.state.zoom, wdx = dx / z, wdy = dy / z;
@@ -607,7 +712,7 @@ class Component extends DCLogic {
       // Text blocks are created via the "+ Add Text" button, not by clicking.
     } else if (a.type === 'marquee') {
       this.setState({ marquee: null });
-    } else if (a.type === 'drag' && a.moved) {
+    } else if ((a.type === 'drag' || a.type === 'resize') && a.moved) {
       this._undo.push(a.preSnap); if (this._undo.length > 120) this._undo.shift(); this._redo = [];
     }
   }
@@ -843,7 +948,7 @@ class Component extends DCLogic {
    *  render
    * =================================================================== */
   renderBlockNode(block, M) {
-    const lay = this.layoutBlock(this.glyphsText(block.text), M);
+    const lay = this.layoutBlock(this.glyphsText(block.text), M, block.width);
     const { bbox } = lay;
     // positioned in WORLD space — the world container applies pan + zoom.
     const selected = this.state.selectedIds.includes(block.id);
@@ -866,6 +971,25 @@ class Component extends DCLogic {
       children.push(corner({ right: '-6px', top: '-6px' }));
       children.push(corner({ left: '-6px', bottom: '-6px' }));
       children.push(corner({ right: '-6px', bottom: '-6px' }));
+      // right-edge wrap handle (Figma-style): drag to set the wrap width, double-click for auto
+      if (!editing) {
+        children.push(React.createElement('div', {
+          key: 'rsz',
+          onMouseDown: (e) => this.onResizeDown(e, block.id),
+          onDoubleClick: (e) => { e.stopPropagation(); this.resetWidth(block.id); },
+          title: block.width != null ? 'Drag to set wrap width · double-click for auto width' : 'Drag left to wrap text',
+          style: {
+            position: 'absolute', top: '10px', bottom: '10px', right: '-7px', width: '14px',
+            cursor: 'ew-resize', pointerEvents: 'auto', zIndex: 23,
+            display: 'flex', alignItems: 'center', justifyContent: 'center'
+          }
+        }, React.createElement('div', {
+          key: 'grip', style: {
+            width: '5px', height: '34px', maxHeight: '70%', background: '#2f6bff',
+            borderRadius: '3px', boxShadow: '0 1px 3px rgba(20,18,12,0.30)'
+          }
+        })));
+      }
       // mini toolbar
       children.push(React.createElement('div', {
         key: 'tb', style: {
