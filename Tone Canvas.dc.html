@@ -17,6 +17,7 @@
   textarea{font-family:'Noto Sans SC',sans-serif;}
   button{font-family:inherit;cursor:pointer;}
   ::selection{background:#cfe0ff;}
+  @keyframes tc-pulse{0%{box-shadow:0 0 0 0 rgba(255,255,255,0.65);}70%{box-shadow:0 0 0 7px rgba(255,255,255,0);}100%{box-shadow:0 0 0 0 rgba(255,255,255,0);}}
 </style>
 </helmet>
 <div style="position:fixed;inset:0;overflow:hidden;background:#f3f1ec;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#17150f;-webkit-font-smoothing:antialiased;">
@@ -40,9 +41,20 @@
       <span style="font-size:11.5px;font-weight:700;color:#211e16;width:26px;text-align:right;font-variant-numeric:tabular-nums;">{{ weightVal }}</span>
     </div>
     <div style="width:1px;height:22px;background:rgba(20,18,12,0.10);margin:0 2px;"></div>
+    <div style="display:flex;align-items:center;gap:7px;padding:0 4px;" title="Typeface">
+      <span style="font-size:12.5px;font-weight:600;color:#5b5648;">Font</span>
+      {{ fontSelect }}
+    </div>
+    <div style="width:1px;height:22px;background:rgba(20,18,12,0.10);margin:0 2px;"></div>
+    <div style="display:flex;align-items:center;gap:6px;padding:0 2px;" title="Simplified / Traditional">
+      {{ scriptToggle }}
+    </div>
+    <div style="width:1px;height:22px;background:rgba(20,18,12,0.10);margin:0 2px;"></div>
     <button onClick="{{ toggleFrames }}" style="{{ framesBtnStyle }}">
       <span style="font-size:13px;line-height:1;">◇</span> Tone&nbsp;frames
     </button>
+    <div style="width:1px;height:22px;background:rgba(20,18,12,0.10);margin:0 2px;"></div>
+    {{ recordControl }}
     <div style="width:1px;height:22px;background:rgba(20,18,12,0.10);margin:0 2px;"></div>
     <div id="tc-add" style="position:relative;display:flex;align-items:stretch;">
       <button onClick="{{ addText }}" style="display:flex;align-items:center;gap:5px;padding:7px 12px;font-size:12.5px;font-weight:700;color:#fff;background:#1c1a14;border:none;border-radius:8px 0 0 8px;">
@@ -142,6 +154,86 @@ class Component extends DCLogic {
     } catch (e) { return null; }
   }
 
+  /* ===================================================================
+   *  Fonts — curated Chinese typefaces grouped by source. System fonts are
+   *  already on the user's machine (Apple PingFang/Songti/Kaiti, Windows
+   *  YaHei…); Google + Open-Source webfonts are injected lazily the first
+   *  time they're shown. Google families ship Simplified (SC) and
+   *  Traditional (TC) cuts, so the active script picks which one to load.
+   * =================================================================== */
+  static FONTS = [
+    { id:'system',     label:'System Sans',           group:'System',      stack:'system-ui,-apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif' },
+    { id:'pingfang',   label:'PingFang · 苹方',        group:'System',      stack:'"PingFang SC","PingFang TC","PingFang HK",sans-serif' },
+    { id:'songti',     label:'Songti · 宋体',          group:'System',      stack:'"Songti SC","Songti TC","SimSun",serif' },
+    { id:'kaiti',      label:'Kaiti · 楷体',           group:'System',      stack:'"Kaiti SC","Kaiti TC","STKaiti","KaiTi",serif' },
+    { id:'noto-sans',  label:'Noto Sans',             group:'Google',      google:{ sc:'Noto Sans SC',  tc:'Noto Sans TC'  }, axis:true },
+    { id:'noto-serif', label:'Noto Serif',            group:'Google',      google:{ sc:'Noto Serif SC', tc:'Noto Serif TC' }, axis:true },
+    { id:'zcool',      label:'ZCOOL XiaoWei · 小薇',    group:'Google',      google:{ sc:'ZCOOL XiaoWei', tc:'ZCOOL XiaoWei' } },
+    { id:'mashan',     label:'Ma Shan Zheng · 马善政',  group:'Google',      google:{ sc:'Ma Shan Zheng', tc:'Ma Shan Zheng' } },
+    { id:'zhimang',    label:'Zhi Mang Xing · 芝芒行',  group:'Google',      google:{ sc:'Zhi Mang Xing', tc:'Zhi Mang Xing' } },
+    { id:'longcang',   label:'Long Cang · 龙藏',        group:'Google',      google:{ sc:'Long Cang',     tc:'Long Cang'     } },
+    { id:'lxgw',       label:'LXGW WenKai · 霞鹜文楷',  group:'Open Source', css:'https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css', family:'LXGW WenKai' }
+  ];
+
+  fontDef(id){ return Component.FONTS.find(f => f.id === id) || Component.FONTS.find(f => f.id === 'noto-sans') || Component.FONTS[0]; }
+
+  // resolve a font id + script into a CSS font-family stack (TC cut first in traditional mode)
+  fontStack(id, script){
+    const f = this.fontDef(id);
+    if (f.stack) return f.stack;
+    if (f.css)   return `"${f.family}",sans-serif`;
+    if (f.google){
+      const primary = script === 'traditional' ? f.google.tc : f.google.sc;
+      const second  = script === 'traditional' ? f.google.sc : f.google.tc;
+      return primary === second ? `"${primary}",sans-serif` : `"${primary}","${second}",sans-serif`;
+    }
+    return 'sans-serif';
+  }
+
+  // inject a font's stylesheet once for the active script (idempotent)
+  ensureFont(id, script){
+    if (typeof document === 'undefined') return;
+    if (!this._loadedFonts) this._loadedFonts = new Set();
+    const f = this.fontDef(id);
+    const add = (key, href) => {
+      if (this._loadedFonts.has(key)) return;
+      this._loadedFonts.add(key);
+      const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; document.head.appendChild(l);
+    };
+    if (f.css) { add('css:' + f.id, f.css); return; }
+    if (f.google){
+      const fam = script === 'traditional' ? f.google.tc : f.google.sc;
+      const q = fam.replace(/ /g, '+');
+      add('g:' + fam, f.axis
+        ? `https://fonts.googleapis.com/css2?family=${q}:wght@100..900&display=swap`
+        : `https://fonts.googleapis.com/css2?family=${q}&display=swap`);
+    }
+  }
+
+  // load every font in play (default + each block) for the active script
+  ensureUsedFonts(){
+    const ids = new Set([this.state.defFont]);
+    this.state.blocks.forEach(b => ids.add(b.font || this.state.defFont));
+    ids.forEach(id => this.ensureFont(id, this.state.script));
+  }
+
+  /* ---- Simplified ⇄ Traditional (non-destructive, render-time) ------ */
+  converter(){
+    if (this.state.script !== 'traditional') return null;
+    const O = (typeof window !== 'undefined') ? window.OpenCC : null;
+    if (!O) return null;
+    try { if (!this._s2t) this._s2t = O.Converter({ from: 'cn', to: 'tw' }); }
+    catch (e) { return null; }
+    return this._s2t;
+  }
+  // the text actually drawn as glyphs — converted to Traditional when toggled.
+  // The stored block.text (and the edit textarea) always keep the original input.
+  glyphsText(raw){
+    const c = this.converter();
+    if (!c || !raw) return raw;
+    try { return c(raw); } catch (e) { return raw; }
+  }
+
   // detectTone — returns {tone, kind}. kind: hanzi | neutral | punct | space.
   // `pz` is the pinyin-pro per-character result (or null before it loads).
   // NOTE: 轻声 (neutral / tone 0) is treated as first tone for now.
@@ -178,7 +270,7 @@ class Component extends DCLogic {
     const FOLD_ANGLE = 30;                // tone 3 half-skew angle (deg)
     const LINE_GAP = FS * 2.45;
     const HANZI_GAP = 4;                  // tracking between adjacent Hanzi (px)
-    const PUNCT_GAP = 8;                  // tracking next to a punctuation mark (px)
+    const PUNCT_GAP = 16;                 // tracking next to a punctuation mark (px)
     return { FS, ADV, SLOPE, FOLD_ANGLE, LINE_GAP, HANZI_GAP, PUNCT_GAP, weight: 700 };
   }
 
@@ -252,7 +344,7 @@ class Component extends DCLogic {
   glyphText(spec, fontSize, fill, opacity, M) {
     return React.createElement('text', {
       x: spec.adv / 2, y: 0, textAnchor: 'middle', dominantBaseline: 'central',
-      fontFamily: "'Noto Sans SC', sans-serif",
+      fontFamily: M.fontFamily || "'Noto Sans SC', sans-serif",
       fontWeight: M.weight,
       fontSize, fill, fillOpacity: opacity
     }, spec.ch);
@@ -290,7 +382,7 @@ class Component extends DCLogic {
         transform: `translate(${spec.sx + ox},${spec.sy + oy}) skewX(${SKX}) skewY(${SKY}) translate(0,${-0.5 * FS})`
       }, this.glyphText(spec, FS, fill, opacity, M));
     }
-    const op = spec.punct ? opacity * 0.85 : opacity;
+    const op = opacity;   // punctuation uses the same colour/opacity as the Hanzi
     return React.createElement('g', {
       key: idBase, transform: `translate(${spec.sx + ox},${spec.sy + oy}) skewY(${spec.angle})`
     }, this.glyphText(spec, FS, fill, op, M));
@@ -329,9 +421,13 @@ class Component extends DCLogic {
 
   renderBlockSvg(block, M) {
     // per-block colour + variable-font weight
-    const MB = { ...M, weight: block.weight != null ? block.weight : M.weight };
+    const MB = {
+      ...M,
+      weight: block.weight != null ? block.weight : M.weight,
+      fontFamily: this.fontStack(block.font || this.state.defFont, this.state.script)
+    };
     const faceFill = block.color || '#161410';
-    const lay = this.layoutBlock(block.text, MB);
+    const lay = this.layoutBlock(this.glyphsText(block.text), MB);
     const { bbox, specs } = lay;
     const defs = [], faces = [], frames = [];
     specs.forEach(s => {
@@ -365,7 +461,11 @@ class Component extends DCLogic {
     marquee: null,           // {x, y, w, h} in screen space while box-selecting
     defColor: '#161410',     // colour + weight applied to new blocks / shown in toolbar
     defWeight: 700,
-    addMenuOpen: false       // "+ Add Text" split-button dropdown
+    defFont: 'noto-sans',    // typeface applied to new blocks / shown in toolbar
+    script: 'simplified',    // 'simplified' | 'traditional' — render-time glyph conversion
+    addMenuOpen: false,      // "+ Add Text" split-button dropdown
+    recording: false,        // live Chinese dictation in progress
+    recStatus: ''            // short status line shown on the record chip
   };
   _nextId = 3;
   _act = null;   // active pointer action
@@ -400,6 +500,15 @@ class Component extends DCLogic {
       s.onload = () => this.forceUpdate();
       document.head.appendChild(s);
     }
+    // Load opencc-js for accurate Simplified -> Traditional glyph conversion.
+    if (typeof window !== 'undefined' && !window.OpenCC) {
+      const o = document.createElement('script');
+      o.src = 'https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js';
+      o.async = true;
+      o.onload = () => this.forceUpdate();
+      document.head.appendChild(o);
+    }
+    this.ensureUsedFonts();
   }
   componentWillUnmount() {
     window.removeEventListener('mousemove', this._onMove);
@@ -408,6 +517,7 @@ class Component extends DCLogic {
     window.removeEventListener('keyup', this._onKeyUp);
     window.removeEventListener('wheel', this._onWheel, { passive: false });
     window.removeEventListener('mousedown', this._onDocDown);
+    if (this._recog) { try { this._recog.onend = null; this._recog.stop(); } catch (e) {} this._recog = null; }
   }
 
   /* ---- coordinate + history helpers ---- */
@@ -430,7 +540,7 @@ class Component extends DCLogic {
     this.setState({ blocks: s.blocks, selectedIds: s.selectedIds, editingId: null });
   }
   blockWorldRect(b, M) {
-    const { bbox } = this.layoutBlock(b.text, M);
+    const { bbox } = this.layoutBlock(this.glyphsText(b.text), M);
     const w = (!b.text ? 240 : bbox.w), h = (!b.text ? 50 : bbox.h);
     return { x: b.x + bbox.x, y: b.y + bbox.y, w, h };
   }
@@ -507,6 +617,12 @@ class Component extends DCLogic {
     else this.setState(s => ({ panX: s.panX - e.deltaX, panY: s.panY - e.deltaY }));
   }
   finishEdit(id) {
+    // While dictating into this block, just leave the textarea — keep the block
+    // alive (even if momentarily empty) so incoming speech still has a target.
+    if (this.state.recording && id === this._recBlockId) {
+      this.setState(s => ({ editingId: s.editingId === id ? null : s.editingId }));
+      return;
+    }
     this.setState(s => {
       const b = s.blocks.find(b => b.id === id);
       const empty = !b || !b.text || !b.text.trim();
@@ -558,6 +674,9 @@ class Component extends DCLogic {
   }
   editText(id, v) {
     if (!this._editDirty) { this._undo.push(this._editPre || this.snap()); if (this._undo.length > 120) this._undo.shift(); this._redo = []; this._editDirty = true; }
+    // If you hand-edit while dictating, adopt your text as the new anchor so the
+    // next recognized words append after your edit instead of overwriting it.
+    if (this.state.recording && id === this._recBlockId) { this._recBase = v; this._recFinal = ''; }
     this.setState(s => ({ blocks: s.blocks.map(b => b.id === id ? { ...b, text: v } : b) }));
   }
   // apply a colour / weight patch to the selected blocks (and remember as default)
@@ -566,6 +685,7 @@ class Component extends DCLogic {
       const def = {};
       if ('color' in patch) def.defColor = patch.color;
       if ('weight' in patch) def.defWeight = patch.weight;
+      if ('font' in patch) def.defFont = patch.font;
       const ids = s.selectedIds;
       if (!ids.length) return def;
       return { ...def, blocks: s.blocks.map(b => ids.includes(b.id) ? { ...b, ...patch } : b) };
@@ -578,7 +698,7 @@ class Component extends DCLogic {
     this.pushHistory();
     this._editDirty = true; // creation already recorded; don't double on first keystroke
     this.setState(s => ({
-      blocks: [...s.blocks, { id, x: c.x - 20, y: c.y, text: '', color: s.defColor, weight: s.defWeight }],
+      blocks: [...s.blocks, { id, x: c.x - 20, y: c.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont }],
       selectedIds: [id], editingId: id, addMenuOpen: false
     }));
   }
@@ -596,16 +716,134 @@ class Component extends DCLogic {
     const c = this.toWorld(window.innerWidth / 2, window.innerHeight / 2);
     this.pushHistory();
     this.setState(s => ({
-      blocks: [...s.blocks, { id, x: c.x - 150, y: c.y, text: this.randomSample(), color: s.defColor, weight: s.defWeight }],
+      blocks: [...s.blocks, { id, x: c.x - 150, y: c.y, text: this.randomSample(), color: s.defColor, weight: s.defWeight, font: s.defFont }],
       selectedIds: [id], addMenuOpen: false
     }));
+  }
+
+  /* ===================================================================
+   *  Live Chinese dictation (speech-to-text)
+   * -------------------------------------------------------------------
+   *  Streams the microphone through the browser's SpeechRecognition engine
+   *  (lang=zh-CN), which returns interim results with minimal latency so the
+   *  tone-wave redraws as you speak. Recognised text lands in a live block;
+   *  the Simplified/Traditional toggle still controls how it's rendered.
+   *  (A hosted LLM STT model — Whisper / gpt-4o-transcribe / Gemini — can be
+   *  swapped in here, but needs an API key + relay; see notes to the user.)
+   * =================================================================== */
+  toggleDictation() { this.state.recording ? this.stopDictation() : this.startDictation(); }
+
+  async startDictation() {
+    const SR = (typeof window !== 'undefined') && (window.SpeechRecognition || window.webkitSpeechRecognition);
+    if (!SR) { this.setState({ recStatus: 'Speech recognition needs Chrome / Edge' }); return; }
+    if (typeof location !== 'undefined' && location.protocol === 'file:') {
+      this.setState({ recStatus: 'Mic blocked on file:// — serve over http://localhost' }); return;
+    }
+
+    // Best-effort permission prompt up front so the user gets a clear dialog. This is
+    // ADVISORY only: SpeechRecognition manages the mic itself, so the sole hard blocker
+    // is an outright permission/security denial. Other getUserMedia quirks (e.g. a
+    // NotFoundError from device enumeration) must NOT abort — we fall through and let
+    // SpeechRecognition try, which often still works.
+    this.setState({ recStatus: 'Starting…' });
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(t => t.stop());  // release it; SpeechRecognition opens its own
+      }
+    } catch (err) {
+      const name = err && err.name ? err.name : '';
+      if (name === 'NotAllowedError' || name === 'SecurityError') {
+        const inFrame = (window.self !== window.top);
+        this.setState({ recStatus: inFrame
+          ? 'Mic blocked in embedded preview — open the page in its own tab'
+          : 'Mic blocked — on macOS enable Chrome in System Settings ▸ Privacy & Security ▸ Microphone, then reopen Chrome' });
+        return;
+      }
+      // not a permission problem — keep going and let SpeechRecognition handle the mic
+      console.warn('[Tone Canvas] mic pre-check failed (' + (name || 'unknown') + '); trying SpeechRecognition anyway');
+    }
+
+    // Hitting Record always drops a fresh, empty text box at the centre of the
+    // view and opens it as a textarea, so you can watch the dictated text stream
+    // in live and edit it anytime — never appending onto existing blocks.
+    const id = this._nextId++;
+    const c = this.toWorld(window.innerWidth / 2, window.innerHeight / 2);
+    this.pushHistory();
+    this._recBase = '';
+    this.setState(s => ({
+      blocks: [...s.blocks, { id, x: c.x - 150, y: c.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont }],
+      selectedIds: [id], editingId: id, recording: true, recStatus: 'Listening…'
+    }));
+    this._recBlockId = id;
+    this._recFinal = '';        // dictation appended this session (after _recBase)
+    this._editPre = this.snap(); // so manual edits during dictation are undoable
+    this._editDirty = true;
+
+    const r = new SR();
+    this._recog = r;
+    r.lang = 'zh-CN';        // stored text stays Simplified; the script toggle handles display
+    r.continuous = true;
+    r.interimResults = true; // emit partials for low-latency live updates
+    r.maxAlternatives = 1;
+    r.onresult = (e) => {
+      let interim = '';
+      // accumulate newly finalized chunks; resultIndex marks what changed.
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        if (res.isFinal) this._recFinal += res[0].transcript.replace(/\s+/g, '');
+        else interim += res[0].transcript;
+      }
+      interim = interim.replace(/\s+/g, '');
+      const bid = this._recBlockId;
+      // text = your existing/edited text  +  what's been dictated  +  live partial
+      const text = (this._recBase || '') + this._recFinal + interim;
+      this.setState(s => ({
+        blocks: s.blocks.map(b => b.id === bid ? { ...b, text } : b),
+        recStatus: interim ? '… ' + interim.slice(-14) : 'Listening…'
+      }));
+    };
+    r.onerror = (e) => {
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        // fatal: stop retrying and guide the user instead of looping the error
+        this.stopDictation('Mic blocked — on macOS enable Chrome in System Settings ▸ Privacy & Security ▸ Microphone, then reopen Chrome');
+        return;
+      }
+      if (e.error === 'audio-capture') { this.stopDictation('No microphone detected — check System Settings ▸ Sound ▸ Input'); return; }
+      if (e.error === 'network') { this.setState({ recStatus: 'Speech service needs an internet connection' }); return; }
+      this.setState({ recStatus: 'Mic error: ' + e.error });
+    };
+    r.onend = () => {
+      // the engine auto-stops after a pause; restart while the user still wants it
+      if (this.state.recording && this._recog === r) { try { r.start(); } catch (e) {} }
+    };
+    try { r.start(); } catch (e) { this.setState({ recStatus: 'Could not start mic' }); }
+  }
+
+  stopDictation(status) {
+    const r = this._recog; this._recog = null;
+    if (r) { try { r.onend = null; r.stop(); } catch (e) {} }
+    const id = this._recBlockId;
+    // Keep the block open and editable so you can correct the transcript; only
+    // discard it if nothing was captured and it was empty to begin with.
+    this.setState(s => {
+      const b = s.blocks.find(x => x.id === id);
+      const empty = b && (!b.text || !b.text.trim());
+      return {
+        recording: false, recStatus: status || '',
+        blocks: empty ? s.blocks.filter(x => x.id !== id) : s.blocks,
+        editingId: empty ? null : s.editingId,
+        selectedIds: empty ? s.selectedIds.filter(x => x !== id) : s.selectedIds
+      };
+    });
   }
 
   /* ===================================================================
    *  render
    * =================================================================== */
   renderBlockNode(block, M) {
-    const lay = this.layoutBlock(block.text, M);
+    const lay = this.layoutBlock(this.glyphsText(block.text), M);
     const { bbox } = lay;
     // positioned in WORLD space — the world container applies pan + zoom.
     const selected = this.state.selectedIds.includes(block.id);
@@ -687,7 +925,7 @@ class Component extends DCLogic {
           border: '1.5px solid #2f6bff', borderRadius: '10px', outline: 'none',
           boxShadow: '0 10px 30px rgba(47,107,255,0.18)', zIndex: 30,
           pointerEvents: 'auto', userSelect: 'text', WebkitUserSelect: 'text',
-          fontFamily: "'Noto Sans SC', sans-serif"
+          fontFamily: this.fontStack(block.font || this.state.defFont, this.state.script)
         }
       });
     }
@@ -700,6 +938,7 @@ class Component extends DCLogic {
 
   renderVals() {
     const M = this.metrics();
+    this.ensureUsedFonts();  // make sure every typeface in view is loaded for the active script
     const { panX, panY, zoom, marquee } = this.state;
     const cell = 26 * zoom;
 
@@ -742,6 +981,79 @@ class Component extends DCLogic {
     const sel = this.state.blocks.filter(b => this.state.selectedIds.includes(b.id));
     const colorVal = sel.length ? (sel[0].color || '#161410') : this.state.defColor;
     const weightVal = sel.length ? (sel[0].weight != null ? sel[0].weight : 700) : this.state.defWeight;
+    const fontVal = sel.length ? (sel[0].font || this.state.defFont) : this.state.defFont;
+
+    // Font picker — native <select> with one <optgroup> per source.
+    const groups = {};
+    Component.FONTS.forEach(f => { (groups[f.group] = groups[f.group] || []).push(f); });
+    const fontSelect = React.createElement('select', {
+      value: fontVal,
+      onChange: (e) => this.applyStyle({ font: e.target.value }),
+      onMouseDown: (e) => e.stopPropagation(),
+      title: 'Typeface',
+      style: {
+        fontSize: '12.5px', fontWeight: 600, color: '#211e16', padding: '4px 22px 4px 8px',
+        border: '1px solid rgba(20,18,12,0.14)', borderRadius: '8px', background: '#fff',
+        cursor: 'pointer', outline: 'none', maxWidth: '170px',
+        fontFamily: this.fontStack(fontVal, this.state.script)
+      }
+    }, Object.keys(groups).map(g =>
+      React.createElement('optgroup', { key: g, label: g },
+        groups[g].map(f => React.createElement('option', { key: f.id, value: f.id, style: { fontFamily: 'system-ui, sans-serif' } }, f.label)))
+    ));
+
+    // Simplified / Traditional segmented toggle.
+    const seg = (label, val) => {
+      const active = this.state.script === val;
+      return React.createElement('button', {
+        key: val, onClick: () => this.setState({ script: val }), title: val === 'simplified' ? 'Simplified 简体' : 'Traditional 繁體',
+        style: {
+          padding: '4px 11px', fontSize: '14px', fontWeight: 700, lineHeight: 1, borderRadius: '6px',
+          fontFamily: "'Noto Sans SC','Noto Sans TC',sans-serif", border: 'none', cursor: 'pointer',
+          color: active ? '#fff' : '#5b5648',
+          background: active ? '#1c1a14' : 'transparent',
+          boxShadow: active ? '0 1px 2px rgba(20,18,12,0.25)' : 'none'
+        }
+      }, label);
+    };
+    const scriptToggle = React.createElement('div', {
+      style: { display: 'flex', gap: '2px', padding: '2px', background: 'rgba(20,18,12,0.06)', borderRadius: '8px' }
+    }, seg('简', 'simplified'), seg('繁', 'traditional'));
+
+    // Live dictation record button (+ inline status while listening).
+    const rec = this.state.recording;
+    const recordBtn = React.createElement('button', {
+      onClick: () => this.toggleDictation(),
+      onMouseDown: (e) => e.stopPropagation(),
+      title: rec ? 'Stop dictation' : 'Live Chinese dictation (speech-to-text)',
+      style: {
+        display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px',
+        fontSize: '12.5px', fontWeight: 700, borderRadius: '9px', cursor: 'pointer',
+        color: rec ? '#fff' : '#b3261e',
+        background: rec ? '#d23b3b' : 'rgba(210,59,59,0.10)',
+        border: rec ? 'none' : '1px solid rgba(210,59,59,0.28)'
+      }
+    },
+      React.createElement('span', {
+        key: 'dot', style: {
+          width: '9px', height: '9px', borderRadius: '50%', flex: '0 0 auto',
+          background: rec ? '#fff' : '#d23b3b',
+          animation: rec ? 'tc-pulse 1.2s ease-out infinite' : 'none'
+        }
+      }),
+      rec ? 'Stop' : 'Record'
+    );
+    const recStatus = this.state.recStatus;
+    const recErr = /block|error|denied|serve|internet|found|use|file|reopen/i.test(recStatus || '');
+    const recordControl = React.createElement('div', {
+      style: { display: 'flex', alignItems: 'center', gap: '8px' }
+    },
+      recordBtn,
+      recStatus ? React.createElement('span', {
+        key: 'st', title: recStatus,
+        style: { fontSize: '11px', fontWeight: 500, color: recErr ? '#b3261e' : '#8a8674', maxWidth: '210px', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }
+      }, recStatus) : null
+    );
 
     const framesActive = this.state.showFrames;
     const framesBtnStyle = {
@@ -763,6 +1075,9 @@ class Component extends DCLogic {
       framesBtnStyle,
       colorVal,
       weightVal,
+      fontSelect,
+      scriptToggle,
+      recordControl,
       addMenuStyle,
       setColor: (e) => this.applyStyle({ color: e && e.target ? e.target.value : e }),
       setWeight: (e) => this.applyStyle({ weight: parseInt(e && e.target ? e.target.value : e, 10) || 100 }),
