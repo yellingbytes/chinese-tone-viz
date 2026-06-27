@@ -9,6 +9,20 @@ import { pinyin } from 'pinyin-pro';
 import * as OpenCCImport from 'opencc-js';
 import { Capacitor } from '@capacitor/core';
 import { SpeechRecognition } from '@capacitor-community/speech-recognition';
+import {
+  ArrowCounterClockwise, ArrowClockwise, ShareFat, DotsThree,
+  TextT, Microphone, SlidersHorizontal, PlayCircle, Palette, TextAa,
+  X, Check, Pause, Waveform, BoundingBox, GridFour, Info, Repeat, Gauge, Trash,
+} from '@phosphor-icons/react';
+import { ToneWaveIcon, HanziSegmentIcon, ToneSegmentsIcon, ToneFrameIcon, EdgeJointsIcon } from './ToneIcons';
+
+// shared design tokens (mirror docs/ios-redesign.md)
+const TOK = {
+  canvas: '#f3f1ec', ink: '#17150f', inkSoft: '#6c685c', inkDim: '#b6b1a4',
+  accent: '#2f6bff', rec: '#e5484d', surface: 'rgba(255,255,255,0.86)',
+  sep: 'rgba(20,18,12,0.08)',
+};
+const COLOR_CHIPS = ['#161410', '#e5484d', '#e8590c', '#f08c00', '#2f9e44', '#1971c2', '#2f6bff', '#7048e8', '#c2255c', '#ffffff'];
 
 const pinyinPro = { pinyin };
 const OpenCC = (OpenCCImport && OpenCCImport.Converter)
@@ -439,11 +453,23 @@ export default class App extends React.Component {
     const faceFill = block.color || '#161410';
     const lay = this.layoutBlock(this.glyphsText(block.text), MB, block.width);
     const { bbox, specs } = lay;
-    const defs = [], faces = [], frames = [];
+
+    // Tone visualization mode (set via the Tone sheet)
+    const mode = this.state.canvasMode;
+    const showSeg = mode !== 'hanzi';                 // segments under all modes except pure Hanzi
+    const segOnly = mode === 'segmentsOnly';
+    const motion = this.state.motionPlaying;
+    const facesOpacity = motion ? 0.08 : (segOnly ? 0 : 1);
+
+    const defs = [], faces = [], segs = [], joints = [], frames = [];
     specs.forEach(s => {
       const id = `g-${block.id}-${s.line}-${s.key}`;
-      if (s.kind === 'fold') this.foldClips(s, id, MB).forEach(d => defs.push(d));
-      faces.push(this.glyphFace(s, faceFill, 1, null, MB, id + '-f', id));
+      if (!segOnly) {
+        if (s.kind === 'fold') this.foldClips(s, id, MB).forEach(d => defs.push(d));
+        faces.push(this.glyphFace(s, faceFill, 1, null, MB, id + '-f', id));
+      }
+      if (showSeg || motion) segs.push(this.segmentLine(s, faceFill, segOnly ? 0.95 : 0.4, id + '-s', MB));
+      if (this.state.showEdgeJoints) joints.push(this.jointDot(s, faceFill, id + '-j', MB));
       if (this.state.showFrames) this.debugFrame(s, id, MB).forEach(f => frames.push(f));
     });
     return React.createElement('svg', {
@@ -451,9 +477,27 @@ export default class App extends React.Component {
       style: { display: 'block', overflow: 'visible', pointerEvents: 'none' }
     },
       React.createElement('defs', { key: 'defs' }, defs),
-      React.createElement('g', { key: 'fc' }, faces),
+      segs.length ? React.createElement('g', { key: 'sg', style: { opacity: segOnly ? 1 : 0.9 } }, segs) : null,
+      React.createElement('g', { key: 'fc', style: { opacity: facesOpacity, transition: `opacity ${0.7 / (this.state.motionSpeed || 1)}s cubic-bezier(0.22,0.61,0.36,1)` } }, faces),
+      joints.length ? React.createElement('g', { key: 'jt' }, joints) : null,
       frames.length ? React.createElement('g', { key: 'fr' }, frames) : null
-    ) ;
+    );
+  }
+
+  // a single clean tone-segment line for a spec (the connecting wave)
+  segmentLine(spec, color, opacity, key, M) {
+    const w = M.FS * 0.05;
+    if (spec.kind === 'fold') {
+      const vx = spec.sx + spec.adv / 2, vy = spec.sy + spec.dip, ex = spec.sx + spec.adv, ey = spec.sy;
+      return React.createElement('polyline', { key, points: `${spec.sx},${spec.sy} ${vx},${vy} ${ex},${ey}`, fill: 'none', stroke: color, strokeOpacity: opacity, strokeWidth: w, strokeLinecap: 'round', strokeLinejoin: 'round' });
+    }
+    const ex = spec.sx + spec.adv, ey = spec.sy + spec.dy;
+    return React.createElement('line', { key, x1: spec.sx, y1: spec.sy, x2: ex, y2: ey, stroke: color, strokeOpacity: opacity, strokeWidth: w, strokeLinecap: 'round' });
+  }
+
+  // the seam dot at a glyph cell's start edge (Edge Joints)
+  jointDot(spec, color, key, M) {
+    return React.createElement('circle', { key, cx: spec.sx, cy: spec.sy, r: M.FS * 0.05, fill: color });
   }
 
   /* ===================================================================
@@ -475,7 +519,14 @@ export default class App extends React.Component {
     script: 'simplified',    // 'simplified' | 'traditional' — render-time glyph conversion
     addMenuOpen: false,      // "+ Add Text" split-button dropdown
     recording: false,        // live Chinese dictation in progress
-    recStatus: ''            // short status line shown on the record chip
+    recStatus: '',           // short status line shown on the record chip
+    activeSheet: null,       // null | 'dictation' | 'tone' | 'style' | 'motion' | 'more'
+    canvasMode: 'hanziSegments', // 'hanzi' | 'hanziSegments' | 'segmentsOnly' | 'motionPreview'
+    motionPlaying: false,    // Motion preview animation in progress
+    motionSpeed: 1,          // 0.5 | 1 | 2
+    motionLoop: false,
+    showEdgeJoints: false,   // draw the seam dot where glyph cells meet
+    toast: ''                // transient status message
   };
   _nextId = 3;
   _act = null;   // active pointer action
@@ -562,7 +613,7 @@ export default class App extends React.Component {
     }
     if (e.button !== 0) return;
     // left-drag on empty space -> marquee box-select; a plain click adds text
-    this._act = { type: 'maybe-marquee', sx: e.clientX, sy: e.clientY, add: e.shiftKey, base: e.shiftKey ? this.state.selectedIds.slice() : [], moved: false };
+    this._act = { type: 'maybe-marquee', sx: e.clientX, sy: e.clientY, add: e.shiftKey, base: e.shiftKey ? this.state.selectedIds.slice() : [], moved: false, hadSel: this.state.selectedIds.length > 0 };
     if (!e.shiftKey && this.state.selectedIds.length) this.setState({ selectedIds: [] });
   }
   onBlockDown(e, id) {
@@ -629,8 +680,9 @@ export default class App extends React.Component {
   onUp(e) {
     const a = this._act; this._act = null; if (!a) return;
     if (a.type === 'maybe-marquee') {
-      // plain click on empty canvas -> just clears selection (already done on down).
-      // Text blocks are created via the "+ Add Text" button, not by clicking.
+      // a real tap (no drag) on empty canvas: deselect if something was selected,
+      // otherwise tap-to-add a new text block at that point.
+      if (!a.moved && !a.add && !a.hadSel) { const p = this.toWorld(a.sx, a.sy); this.addTextBlockAt(p.x, p.y); }
     } else if (a.type === 'marquee') {
       this.setState({ marquee: null });
     } else if ((a.type === 'drag' || a.type === 'resize') && a.moved) {
@@ -652,7 +704,7 @@ export default class App extends React.Component {
     if (e.touches.length >= 2) { this._act = null; this._pinch = null; return; }
     e.preventDefault();                                  // suppress the synthetic mouse + page scroll
     const t = e.touches[0];
-    this._act = { type: 'pan', sx: t.clientX, sy: t.clientY, px: this.state.panX, py: this.state.panY, moved: false };
+    this._act = { type: 'pan', sx: t.clientX, sy: t.clientY, px: this.state.panX, py: this.state.panY, moved: false, hadSel: this.state.selectedIds.length > 0 };
   }
   onBlockTouchStart(e, id) {
     if (e.touches.length >= 2) { this._act = null; this._pinch = null; return; }
@@ -703,7 +755,10 @@ export default class App extends React.Component {
     if (e.touches.length >= 1) { this._pinch = null; this._act = null; return; }  // pinch -> fewer fingers: reset
     this._pinch = null;
     const a = this._act;
-    if (a && a.type === 'pan' && !a.moved) this.setState({ selectedIds: [] });    // tap empty space -> deselect
+    if (a && a.type === 'pan' && !a.moved) {
+      if (a.hadSel) this.setState({ selectedIds: [] });                            // tap empty -> deselect
+      else { const p = this.toWorld(a.sx, a.sy); this.addTextBlockAt(p.x, p.y); }  // or tap-to-add
+    }
     this.onUp({});
   }
   finishEdit(id) {
@@ -1103,6 +1158,43 @@ export default class App extends React.Component {
     return { padding: '5px 10px', fontSize: '12px', fontWeight: 600, color: '#211e16', background: 'transparent', border: 'none', borderRadius: '6px', cursor: 'pointer' };
   }
 
+  /* ---- mobile chrome: sheets, tone modes, motion, tap-to-add ---- */
+  openSheet(name) { this.setState({ activeSheet: name }); }
+  closeSheet() { if (this.state.recording) this.stopDictation(); this.setState({ activeSheet: null }); }
+  setCanvasMode(m) { this.setState({ canvasMode: m }); }
+  toggleEdgeJoints() { this.setState(s => ({ showEdgeJoints: !s.showEdgeJoints })); }
+  resetCanvas() { this.pushHistory(); this.setState({ blocks: [], selectedIds: [], editingId: null, activeSheet: null }); }
+  flash(msg) { this.setState({ toast: msg }); clearTimeout(this._toastT); this._toastT = setTimeout(() => this.setState({ toast: '' }), 1800); }
+  share() { this.flash('Export coming soon'); }
+  playMotion() {
+    const spd = this.state.motionSpeed || 1;
+    this.setState({ canvasMode: 'motionPreview', motionPlaying: false });
+    requestAnimationFrame(() => this.setState({ motionPlaying: true }));
+    clearTimeout(this._motionT);
+    this._motionT = setTimeout(() => {
+      this.setState({ motionPlaying: false });
+      if (this.state.motionLoop && this.state.activeSheet === 'motion') {
+        clearTimeout(this._loopT); this._loopT = setTimeout(() => this.playMotion(), 700 / spd);
+      }
+    }, 1500 / spd);
+  }
+  // create an empty editable block at a world point (tap-to-add on the canvas)
+  addTextBlockAt(wx, wy) {
+    const id = this._nextId++;
+    this.pushHistory(); this._editDirty = true;
+    this.setState(s => ({
+      blocks: [...s.blocks, { id, x: wx, y: wy, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont }],
+      selectedIds: [id], editingId: id
+    }));
+  }
+  // dictation routed through the bottom sheet
+  dictateTap() { this.setState({ activeSheet: 'dictation' }); if (!this.state.recording) this.startDictation(); }
+  insertDictation() { this.stopDictation(); this.setState({ activeSheet: null }); }
+  cancelDictation() {
+    const id = this._recBlockId; this.stopDictation();
+    this.setState(s => ({ blocks: s.blocks.filter(b => b.id !== id), selectedIds: s.selectedIds.filter(x => x !== id), activeSheet: null }));
+  }
+
   renderVals() {
     const M = this.metrics();
     this.ensureUsedFonts();  // make sure every typeface in view is loaded for the active script
@@ -1242,6 +1334,7 @@ export default class App extends React.Component {
       framesBtnStyle,
       colorVal,
       weightVal,
+      fontVal,
       fontSelect,
       scriptToggle,
       recordControl,
@@ -1258,76 +1351,249 @@ export default class App extends React.Component {
   render() {
     const v = this.renderVals();
     const h = React.createElement;
-    const divider = (k) => h('div', { key: 'd' + k, style: { width: 1, height: 22, background: 'rgba(20,18,12,0.10)', margin: '0 2px', flex: '0 0 auto' } });
-    const lbl = (t) => h('span', { style: { fontSize: '12.5px', fontWeight: 600, color: '#5b5648', whiteSpace: 'nowrap' } }, t);
-    const toolbar = h('div', {
-      className: 'tc-bar',
-      style: {
-        position: 'absolute', top: 18, left: '50%', transform: 'translateX(-50%)',
-        display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px',
-        background: 'rgba(255,255,255,0.82)', backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)',
-        border: '1px solid rgba(20,18,12,0.08)', borderRadius: 14,
-        boxShadow: '0 8px 30px rgba(20,18,12,0.10),0 1px 2px rgba(20,18,12,0.06)', zIndex: 50, userSelect: 'none'
-      }
+    const st = this.state;
+    const hasSel = st.selectedIds.length > 0;
+
+    // -- small building blocks -------------------------------------------------
+    const iconBtn = (Comp, label, onClick, opts = {}) => {
+      const dis = !!opts.disabled, act = !!opts.active;
+      const c = dis ? TOK.inkDim : (opts.danger ? TOK.rec : (act ? TOK.accent : TOK.ink));
+      return h('button', {
+        key: label, 'aria-label': label, title: label, disabled: dis,
+        onClick: dis ? undefined : onClick,
+        style: { width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', borderRadius: 10, color: c, cursor: dis ? 'default' : 'pointer' }
+      }, h(Comp, { size: 22, color: c, weight: act ? 'fill' : 'regular' }));
+    };
+    const dockItem = (Comp, label, onClick, opts = {}) => {
+      const dis = !!opts.disabled, act = !!opts.active;
+      const c = dis ? TOK.inkDim : (act ? TOK.accent : TOK.ink);
+      return h('button', {
+        key: label, disabled: dis, onClick: dis ? undefined : onClick,
+        style: { flex: 1, minWidth: 56, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3, padding: '6px 0', background: 'none', border: 'none', color: c, cursor: dis ? 'default' : 'pointer' }
+      },
+        h(Comp, { size: 23, color: c, weight: act ? 'fill' : 'regular' }),
+        h('span', { style: { fontSize: 11, fontWeight: 500, letterSpacing: '0.1px' } }, label),
+        h('span', { style: { width: 5, height: 5, borderRadius: '50%', background: act ? TOK.accent : 'transparent', marginTop: -1 } })
+      );
+    };
+
+    // -- top app bar -----------------------------------------------------------
+    const topBar = h('div', {
+      style: { position: 'absolute', top: 0, left: 0, right: 0, paddingTop: 'env(safe-area-inset-top)', background: TOK.surface, backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)', borderBottom: `1px solid ${TOK.sep}`, zIndex: 50, userSelect: 'none' }
     },
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: 9, padding: '0 8px 0 4px' } },
-        h('span', { style: { fontSize: 22, fontWeight: 900, fontFamily: "'Noto Sans SC',sans-serif", lineHeight: 1, letterSpacing: '-1px' } }, '聲'),
-        h('span', { style: { fontSize: 13, fontWeight: 600, letterSpacing: '-0.2px', color: '#211e16', whiteSpace: 'nowrap' } }, 'Tone Canvas')
-      ),
-      divider(1),
-      h('label', { title: 'Text color', style: { display: 'flex', alignItems: 'center', gap: 7, padding: '4px 6px', cursor: 'pointer' } },
-        lbl('Color'),
-        h('input', { type: 'color', value: v.colorVal, onInput: v.setColor, onChange: v.setColor, style: { width: 24, height: 24, border: '1px solid rgba(20,18,12,0.12)', borderRadius: 7, background: 'none', cursor: 'pointer', padding: 0 } })
-      ),
-      divider(2),
-      h('div', { title: 'Font weight', style: { display: 'flex', alignItems: 'center', gap: 8, padding: '0 4px' } },
-        lbl('Weight'),
-        h('input', { type: 'range', min: 100, max: 900, step: 10, value: v.weightVal, onInput: v.setWeight, onChange: v.setWeight, style: { width: 88, cursor: 'pointer', accentColor: '#1c1a14' } }),
-        h('span', { style: { fontSize: '11.5px', fontWeight: 700, color: '#211e16', width: 26, textAlign: 'right', fontVariantNumeric: 'tabular-nums' } }, v.weightVal)
-      ),
-      divider(3),
-      h('div', { title: 'Typeface', style: { display: 'flex', alignItems: 'center', gap: 7, padding: '0 4px' } }, lbl('Font'), v.fontSelect),
-      divider(4),
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, padding: '0 2px' } }, v.scriptToggle),
-      divider(5),
-      v.recordControl,
-      divider(6),
-      h('button', { onClick: v.toggleFrames, style: v.framesBtnStyle },
-        h('span', { style: { fontSize: 13, lineHeight: 1 } }, '◇'), ' Tone frames'),
-      divider(7),
-      h('div', { id: 'tc-add', style: { position: 'relative', display: 'flex', alignItems: 'stretch' } },
-        h('button', { onClick: v.addText, style: { display: 'flex', alignItems: 'center', gap: 5, padding: '7px 12px', fontSize: '12.5px', fontWeight: 700, color: '#fff', background: '#1c1a14', border: 'none', borderRadius: '8px 0 0 8px', whiteSpace: 'nowrap' } },
-          h('span', { style: { fontSize: 14, lineHeight: 1 } }, '+'), ' Add Text'),
-        h('button', { onClick: v.toggleAddMenu, title: 'More', style: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, padding: 0, fontSize: 10, color: '#fff', background: '#1c1a14', border: 'none', borderLeft: '1px solid rgba(255,255,255,0.18)', borderRadius: '0 8px 8px 0' } }, '▾'),
-        h('div', { style: v.addMenuStyle },
-          h('button', { onClick: v.addSample, style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, width: '100%', padding: '8px 11px', fontSize: '12.5px', fontWeight: 600, color: '#211e16', background: 'transparent', border: 'none', borderRadius: 8, textAlign: 'left' } },
-            h('span', null, 'Sample Text'),
-            h('span', { style: { fontSize: '10.5px', fontWeight: 500, color: '#8a8674' } }, 'Add a random tone fun-fact')
-          )
+      h('div', { style: { height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 8px 0 12px' } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 9 } },
+          h('div', { style: { width: 28, height: 28, borderRadius: 8, background: TOK.ink, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Noto Sans SC',sans-serif", fontWeight: 800, fontSize: 17, lineHeight: 1 } }, '聲'),
+          h('span', { style: { fontSize: 15, fontWeight: 600, letterSpacing: '-0.2px', color: TOK.ink } }, 'Tone Canvas')
+        ),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 2 } },
+          iconBtn(ArrowCounterClockwise, 'Undo', () => this.undo(), { disabled: !this._undo.length }),
+          iconBtn(ArrowClockwise, 'Redo', () => this.redo(), { disabled: !this._redo.length }),
+          iconBtn(ShareFat, 'Share', () => this.share(), { disabled: !st.blocks.length }),
+          iconBtn(DotsThree, 'More', () => this.openSheet('more'), { active: st.activeSheet === 'more' })
         )
       )
     );
-    const hintItem = (b, rest) => h('span', null, h('b', { style: { color: '#2f2a1f', fontWeight: 700 } }, b), rest);
-    const sep = (k) => h('span', { key: 's' + k, style: { opacity: 0.4 } }, '·');
-    const hint = h('div', {
-      className: 'tc-hint',
-      style: {
-        position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
-        display: 'flex', alignItems: 'center', gap: 14, padding: '7px 15px',
-        background: 'rgba(255,255,255,0.72)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
-        border: '1px solid rgba(20,18,12,0.06)', borderRadius: 11, fontSize: '11.5px',
-        color: '#6c685c', fontWeight: 500, letterSpacing: '0.1px', zIndex: 40, userSelect: 'none', whiteSpace: 'nowrap'
-      }
+
+    // -- bottom tool dock ------------------------------------------------------
+    const dock = h('div', {
+      style: { position: 'absolute', left: 8, right: 8, bottom: 'calc(8px + env(safe-area-inset-bottom))', height: 64, display: 'flex', alignItems: 'stretch', background: TOK.surface, backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)', border: `1px solid ${TOK.sep}`, borderRadius: 20, boxShadow: '0 8px 30px rgba(20,18,12,0.10)', zIndex: 50, userSelect: 'none' }
     },
-      hintItem('+ Add Text', ' to start'), sep(1),
-      hintItem('Double-click', ' to edit'), sep(2),
-      hintItem('Drag', ' to move'), sep(3),
-      hintItem('⌫', ' delete'), sep(4),
-      hintItem('⌘D', ' duplicate')
+      dockItem(TextT, 'Text', () => this.addTextBlock()),
+      dockItem(Microphone, 'Dictate', () => this.dictateTap(), { active: st.recording || st.activeSheet === 'dictation' }),
+      dockItem(ToneWaveIcon, 'Tone', () => this.openSheet('tone'), { disabled: !hasSel, active: st.activeSheet === 'tone' }),
+      dockItem(SlidersHorizontal, 'Style', () => this.openSheet('style'), { disabled: !hasSel, active: st.activeSheet === 'style' }),
+      dockItem(PlayCircle, 'Motion', () => this.openSheet('motion'), { disabled: !hasSel, active: st.activeSheet === 'motion' })
     );
+
+    // -- empty state -----------------------------------------------------------
+    const pill = (Comp, label, onClick) => h('button', {
+      key: label, onClick,
+      style: { display: 'flex', alignItems: 'center', gap: 7, padding: '11px 18px', fontSize: 15, fontWeight: 600, color: TOK.ink, background: '#fff', border: `1px solid ${TOK.sep}`, borderRadius: 12, boxShadow: '0 2px 10px rgba(20,18,12,0.06)', cursor: 'pointer' }
+    }, h(Comp, { size: 19, color: TOK.ink }), label);
+    const empty = (!st.blocks.length) ? h('div', {
+      style: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18, pointerEvents: 'none', zIndex: 5 }
+    },
+      h('div', { style: { fontSize: 18, fontWeight: 500, color: TOK.inkSoft } }, 'Tap to add text'),
+      h('div', { style: { display: 'flex', gap: 12, pointerEvents: 'auto' } }, pill(TextT, 'Text', () => this.addTextBlock()), pill(Microphone, 'Dictate', () => this.dictateTap()))
+    ) : null;
+
+    // -- bottom sheet shell ----------------------------------------------------
+    const sheet = (title, body, onClose) => h('div', { key: 'sheet', style: { position: 'fixed', inset: 0, zIndex: 80 } },
+      h('div', { onClick: onClose, style: { position: 'absolute', inset: 0, background: 'rgba(20,18,12,0.20)' } }),
+      h('div', { style: { position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '82vh', overflowY: 'auto', background: '#fff', borderRadius: '24px 24px 0 0', boxShadow: '0 -10px 44px rgba(20,18,12,0.20)', padding: '8px 18px calc(18px + env(safe-area-inset-bottom))' } },
+        h('div', { style: { width: 38, height: 5, borderRadius: 3, background: 'rgba(20,18,12,0.16)', margin: '0 auto 10px' } }),
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 } },
+          h('div', { style: { fontSize: 18, fontWeight: 600, color: TOK.ink } }, title),
+          h('button', { onClick: onClose, 'aria-label': 'Close', style: { width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, border: 'none', background: 'rgba(20,18,12,0.05)', cursor: 'pointer', color: TOK.inkSoft } }, h(X, { size: 17 }))
+        ),
+        body
+      )
+    );
+
+    const activeSheet = this.renderActiveSheet(v, h, sheet);
+
+    // -- toast -----------------------------------------------------------------
+    const toast = st.toast ? h('div', { key: 'toast', style: { position: 'fixed', left: '50%', bottom: 'calc(96px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', background: TOK.ink, color: '#fff', fontSize: 13, fontWeight: 500, padding: '9px 15px', borderRadius: 10, zIndex: 90, boxShadow: '0 6px 20px rgba(20,18,12,0.25)' } }, st.toast) : null;
+
     return h('div', {
-      style: { position: 'fixed', inset: 0, overflow: 'hidden', background: '#f3f1ec', fontFamily: "system-ui,-apple-system,'Segoe UI',sans-serif", color: '#17150f', WebkitFontSmoothing: 'antialiased' }
-    }, v.canvasContent, toolbar, hint);
+      style: { position: 'fixed', inset: 0, overflow: 'hidden', background: TOK.canvas, fontFamily: "system-ui,-apple-system,'Segoe UI',sans-serif", color: TOK.ink, WebkitFontSmoothing: 'antialiased' }
+    }, v.canvasContent, empty, topBar, dock, activeSheet, toast);
+  }
+
+  // ---- sheet bodies ----------------------------------------------------------
+  renderActiveSheet(v, h, sheet) {
+    const st = this.state;
+    switch (st.activeSheet) {
+      case 'dictation': return this.sheetDictation(v, h, sheet);
+      case 'tone': return this.sheetTone(v, h, sheet);
+      case 'style': return this.sheetStyle(v, h, sheet);
+      case 'motion': return this.sheetMotion(v, h, sheet);
+      case 'more': return this.sheetMore(v, h, sheet);
+      default: return null;
+    }
+  }
+
+  sectionHeader(h, Comp, text) {
+    return h('div', { style: { display: 'flex', alignItems: 'center', gap: 7, margin: '4px 0 10px', color: TOK.inkSoft } },
+      Comp ? h(Comp, { size: 17, color: TOK.inkSoft }) : null,
+      h('span', { style: { fontSize: 12.5, fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase' } }, text));
+  }
+
+  sheetDictation(v, h, sheet) {
+    const st = this.state, rec = st.recording;
+    const body = h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '6px 0 4px' } },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, color: rec ? TOK.rec : TOK.inkSoft, fontSize: 14, fontWeight: 600 } },
+        h('span', { style: { width: 9, height: 9, borderRadius: '50%', background: rec ? TOK.rec : TOK.inkDim, animation: rec ? 'tc-pulse 1.2s ease-out infinite' : 'none' } }),
+        rec ? (st.recStatus || 'Listening…') : 'Paused'
+      ),
+      h(Waveform, { size: 40, color: rec ? TOK.ink : TOK.inkDim, weight: 'duotone' }),
+      h('div', { style: { fontSize: 12, color: TOK.inkSoft } }, 'Speak Mandarin — text appears on the canvas live.'),
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 14, marginTop: 4 } },
+        h('button', { onClick: () => this.cancelDictation(), style: { display: 'flex', alignItems: 'center', gap: 6, padding: '11px 16px', borderRadius: 12, border: `1px solid ${TOK.sep}`, background: '#fff', color: TOK.inkSoft, fontWeight: 600, fontSize: 14, cursor: 'pointer' } }, h(X, { size: 17 }), 'Cancel'),
+        h('button', { onClick: () => (rec ? this.stopDictation() : this.startDictation()), 'aria-label': 'Pause', style: { width: 52, height: 52, borderRadius: 26, border: 'none', background: 'rgba(20,18,12,0.06)', color: TOK.ink, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' } }, h(rec ? Pause : Microphone, { size: 22, weight: 'fill' })),
+        h('button', { onClick: () => this.insertDictation(), style: { display: 'flex', alignItems: 'center', gap: 6, padding: '11px 18px', borderRadius: 12, border: 'none', background: TOK.accent, color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' } }, h(Check, { size: 17, weight: 'bold' }), 'Insert')
+      )
+    );
+    return sheet('Dictate', body, () => this.closeSheet());
+  }
+
+  sheetTone(v, h, sheet) {
+    const st = this.state;
+    const opts = [
+      ['hanzi', TextT, 'Hanzi', 'Characters only.'],
+      ['hanziSegments', HanziSegmentIcon, 'Hanzi + Segments', 'Characters riding the tone wave.'],
+      ['segmentsOnly', ToneSegmentsIcon, 'Segments Only', 'Pure connected tone lines.'],
+      ['motionPreview', PlayCircle, 'Motion Preview', 'Watch Hanzi collapse into segments.'],
+    ];
+    const row = ([val, Comp, title, sub]) => {
+      const active = st.canvasMode === val;
+      return h('button', {
+        key: val,
+        onClick: () => { if (val === 'motionPreview') { this.setState({ canvasMode: val }); this.openSheet('motion'); } else this.setCanvasMode(val); },
+        style: { display: 'flex', alignItems: 'center', gap: 13, width: '100%', padding: '12px 8px', background: 'none', border: 'none', borderRadius: 12, textAlign: 'left', cursor: 'pointer' }
+      },
+        h('div', { style: { width: 28, display: 'flex', justifyContent: 'center', color: active ? TOK.accent : TOK.ink } }, h(Comp, { size: 26, color: active ? TOK.accent : TOK.ink })),
+        h('div', { style: { flex: 1 } },
+          h('div', { style: { fontSize: 15, fontWeight: 600, color: TOK.ink } }, title),
+          h('div', { style: { fontSize: 12.5, color: TOK.inkSoft, marginTop: 1 } }, sub)
+        ),
+        active ? h(Check, { size: 19, weight: 'bold', color: TOK.accent }) : null
+      );
+    };
+    return sheet('Tone Mode', h('div', null, opts.map(row)), () => this.closeSheet());
+  }
+
+  sheetStyle(v, h, sheet) {
+    const st = this.state;
+    // Color
+    const chip = (col) => {
+      const sel = (v.colorVal || '').toLowerCase() === col.toLowerCase();
+      return h('button', { key: col, onClick: () => this.applyStyle({ color: col }), 'aria-label': col,
+        style: { width: 30, height: 30, borderRadius: '50%', background: col, cursor: 'pointer', flex: '0 0 auto', border: col.toLowerCase() === '#ffffff' ? `1px solid ${TOK.sep}` : 'none', outline: sel ? `2px solid ${TOK.accent}` : 'none', outlineOffset: 2, transform: sel ? 'scale(1.08)' : 'none', transition: 'transform 0.12s' } });
+    };
+    const colorRow = h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+      COLOR_CHIPS.map(chip),
+      h('label', { title: 'Custom color', style: { width: 30, height: 30, borderRadius: '50%', border: `1px dashed ${TOK.inkDim}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', position: 'relative', color: TOK.inkSoft } },
+        h(Palette, { size: 15, color: TOK.inkSoft }),
+        h('input', { type: 'color', value: v.colorVal, onInput: v.setColor, onChange: v.setColor, style: { position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' } })
+      )
+    );
+    // Weight
+    const weightRow = h('div', { style: { display: 'flex', alignItems: 'center', gap: 12 } },
+      h('input', { type: 'range', min: 100, max: 900, step: 10, value: v.weightVal, onInput: v.setWeight, onChange: v.setWeight, style: { flex: 1, accentColor: TOK.ink, height: 28 } }),
+      h('span', { style: { width: 34, textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: TOK.ink } }, v.weightVal)
+    );
+    // Font (horizontal preview row)
+    const fontCell = (f) => {
+      const sel = v.fontVal === f.id;
+      return h('button', { key: f.id, onClick: () => this.applyStyle({ font: f.id }), title: f.label,
+        style: { flex: '0 0 auto', minWidth: 64, padding: '8px 12px', borderRadius: 12, border: `1px solid ${sel ? TOK.accent : TOK.sep}`, background: sel ? 'rgba(47,107,255,0.06)' : '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 } },
+        h('span', { style: { fontSize: 22, lineHeight: 1, color: TOK.ink, fontFamily: this.fontStack(f.id, st.script) } }, '字'),
+        h('span', { style: { fontSize: 10.5, color: sel ? TOK.accent : TOK.inkSoft, fontWeight: 600, whiteSpace: 'nowrap' } }, f.label.split(' · ')[0])
+      );
+    };
+    const fontRow = h('div', { style: { display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4 } }, App.FONTS.map(fontCell));
+    // Script
+    const seg = (label, val) => {
+      const active = st.script === val;
+      return h('button', { key: val, onClick: () => this.setState({ script: val }),
+        style: { flex: 1, padding: '9px 0', fontSize: 16, fontWeight: 700, fontFamily: "'Noto Sans SC','Noto Sans TC',sans-serif", borderRadius: 8, border: 'none', cursor: 'pointer', color: active ? '#fff' : TOK.inkSoft, background: active ? TOK.ink : 'transparent' } }, label);
+    };
+    const scriptRow = h('div', { style: { display: 'flex', gap: 3, padding: 3, background: 'rgba(20,18,12,0.06)', borderRadius: 11 } }, seg('简 Simplified', 'simplified'), seg('繁 Traditional', 'traditional'));
+
+    const body = h('div', { style: { display: 'flex', flexDirection: 'column' } },
+      this.sectionHeader(h, Palette, 'Color'), colorRow,
+      h('div', { style: { height: 18 } }),
+      this.sectionHeader(h, SlidersHorizontal, 'Weight'), weightRow,
+      h('div', { style: { height: 18 } }),
+      this.sectionHeader(h, TextAa, 'Font'), fontRow,
+      h('div', { style: { height: 18 } }),
+      this.sectionHeader(h, null, 'Script'), scriptRow
+    );
+    return sheet('Style', body, () => this.closeSheet());
+  }
+
+  sheetMotion(v, h, sheet) {
+    const st = this.state;
+    const speedSeg = (label, val) => h('button', { key: val, onClick: () => this.setState({ motionSpeed: val }),
+      style: { flex: 1, padding: '8px 0', fontSize: 14, fontWeight: 700, borderRadius: 8, border: 'none', cursor: 'pointer', color: st.motionSpeed === val ? '#fff' : TOK.inkSoft, background: st.motionSpeed === val ? TOK.ink : 'transparent' } }, label);
+    const body = h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 } },
+      h('button', { onClick: () => this.playMotion(), 'aria-label': 'Play', style: { border: 'none', background: 'none', cursor: 'pointer', color: TOK.accent } }, h(PlayCircle, { size: 68, weight: 'fill', color: TOK.accent })),
+      h('div', { style: { fontSize: 12.5, color: TOK.inkSoft, textAlign: 'center' } }, 'Hanzi collapse into their pure tone segments.'),
+      h('div', { style: { width: '100%' } },
+        this.sectionHeader(h, Gauge, 'Speed'),
+        h('div', { style: { display: 'flex', gap: 3, padding: 3, background: 'rgba(20,18,12,0.06)', borderRadius: 10 } }, speedSeg('0.5×', 0.5), speedSeg('1×', 1), speedSeg('2×', 2))
+      ),
+      h('button', { onClick: () => this.setState(s => ({ motionLoop: !s.motionLoop })),
+        style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '12px 4px', background: 'none', border: 'none', cursor: 'pointer' } },
+        h('span', { style: { display: 'flex', alignItems: 'center', gap: 8, color: TOK.ink, fontWeight: 600, fontSize: 15 } }, h(Repeat, { size: 18, color: TOK.ink }), 'Loop'),
+        h('span', { style: { width: 42, height: 26, borderRadius: 13, background: st.motionLoop ? TOK.accent : 'rgba(20,18,12,0.15)', position: 'relative', transition: 'background 0.15s' } },
+          h('span', { style: { position: 'absolute', top: 3, left: st.motionLoop ? 19 : 3, width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'left 0.15s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' } }))
+      )
+    );
+    return sheet('Motion', body, () => this.closeSheet());
+  }
+
+  sheetMore(v, h, sheet) {
+    const st = this.state;
+    const toggleRow = (Comp, label, on, onClick) => h('button', { key: label, onClick,
+      style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '13px 6px', background: 'none', border: 'none', cursor: 'pointer' } },
+      h('span', { style: { display: 'flex', alignItems: 'center', gap: 11, color: TOK.ink, fontWeight: 500, fontSize: 15.5 } }, h(Comp, { size: 20, color: TOK.ink }), label),
+      h('span', { style: { width: 42, height: 26, borderRadius: 13, background: on ? TOK.accent : 'rgba(20,18,12,0.15)', position: 'relative' } },
+        h('span', { style: { position: 'absolute', top: 3, left: on ? 19 : 3, width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'left 0.15s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' } }))
+    );
+    const actionRow = (Comp, label, onClick, danger) => h('button', { key: label, onClick,
+      style: { display: 'flex', alignItems: 'center', gap: 11, width: '100%', padding: '13px 6px', background: 'none', border: 'none', cursor: 'pointer', color: danger ? TOK.rec : TOK.ink, fontWeight: 500, fontSize: 15.5 } },
+      h(Comp, { size: 20, color: danger ? TOK.rec : TOK.ink }), label);
+    const body = h('div', null,
+      toggleRow(ToneFrameIcon, 'Tone Frames', st.showFrames, () => this.setState(s => ({ showFrames: !s.showFrames }))),
+      toggleRow(EdgeJointsIcon, 'Edge Joints', st.showEdgeJoints, () => this.toggleEdgeJoints()),
+      h('div', { style: { height: 1, background: TOK.sep, margin: '6px 0' } }),
+      actionRow(Trash, 'Reset Canvas', () => { if (typeof window !== 'undefined' && window.confirm('Clear the whole canvas?')) this.resetCanvas(); }, true),
+      actionRow(Info, 'About', () => this.flash('Tone Canvas · Mandarin tone typography'))
+    );
+    return sheet('More', body, () => this.closeSheet());
   }
 
 }
