@@ -7,6 +7,8 @@
 import React from 'react';
 import { pinyin } from 'pinyin-pro';
 import * as OpenCCImport from 'opencc-js';
+import { Capacitor } from '@capacitor/core';
+import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 
 const pinyinPro = { pinyin };
 const OpenCC = (OpenCCImport && OpenCCImport.Converter)
@@ -822,6 +824,9 @@ export default class App extends React.Component {
   toggleDictation() { this.state.recording ? this.stopDictation() : this.startDictation(); }
 
   async startDictation() {
+    // On packaged iOS/Android the WebView has no Web Speech API — use the native
+    // speech plugin instead. The web/PWA build keeps the Web Speech path below.
+    if (Capacitor.isNativePlatform()) { return this.startNativeDictation(); }
     const SR = (typeof window !== 'undefined') && (window.SpeechRecognition || window.webkitSpeechRecognition);
     if (!SR) { this.setState({ recStatus: 'Speech recognition needs Chrome / Edge' }); return; }
     if (typeof location !== 'undefined' && location.protocol === 'file:') {
@@ -909,7 +914,60 @@ export default class App extends React.Component {
     try { r.start(); } catch (e) { this.setState({ recStatus: 'Could not start mic' }); }
   }
 
+  // Native (iOS/Android) dictation via @capacitor-community/speech-recognition.
+  // Mirrors the web flow: a fresh editable block fills in live. Native engines
+  // return a cumulative transcript per utterance and auto-stop on pauses, so we
+  // commit each utterance into _recBase and restart to keep capturing.
+  async startNativeDictation() {
+    const id = this._nextId++;
+    const c = this.toWorld(window.innerWidth / 2, window.innerHeight / 2);
+    this.pushHistory();
+    this._recBase = ''; this._nativePartial = ''; this._nativeStt = true;
+    this.setState(s => ({
+      blocks: [...s.blocks, { id, x: c.x - 150, y: c.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont }],
+      selectedIds: [id], editingId: id, recording: true, recStatus: 'Starting…'
+    }));
+    this._recBlockId = id; this._editPre = this.snap(); this._editDirty = true;
+
+    const render = () => {
+      const bid = this._recBlockId;
+      const text = (this._recBase || '') + (this._nativePartial || '');
+      this.setState(s => ({
+        blocks: s.blocks.map(b => b.id === bid ? { ...b, text } : b),
+        recStatus: this._nativePartial ? '… ' + this._nativePartial.slice(-14) : 'Listening…'
+      }));
+    };
+    const begin = () => SpeechRecognition.start({ language: 'zh-CN', maxResults: 1, partialResults: true, popup: false });
+    try {
+      const perm = await SpeechRecognition.requestPermissions();
+      if (perm && perm.speechRecognition && perm.speechRecognition !== 'granted') {
+        this.stopDictation('Mic/speech blocked — enable it in Settings'); return;
+      }
+      await SpeechRecognition.removeAllListeners();
+      await SpeechRecognition.addListener('partialResults', (data: any) => {
+        const m = data && data.matches && data.matches[0] ? String(data.matches[0]) : '';
+        this._nativePartial = m.replace(/\s+/g, ''); render();
+      });
+      await SpeechRecognition.addListener('listeningState', (data: any) => {
+        if (data && data.status === 'stopped' && this._nativeStt) {
+          this._recBase = (this._recBase || '') + (this._nativePartial || ''); this._nativePartial = '';
+          if (this.state.recording) { try { begin(); } catch (e) {} }   // keep capturing after a pause
+        }
+      });
+      await begin();
+      this.setState({ recStatus: 'Listening…' });
+    } catch (e) {
+      this.stopDictation('Could not start microphone');
+    }
+  }
+
   stopDictation(status) {
+    if (this._nativeStt) {
+      this._nativeStt = false;
+      try { SpeechRecognition.stop(); } catch (e) {}
+      try { SpeechRecognition.removeAllListeners(); } catch (e) {}
+      this._recBase = (this._recBase || '') + (this._nativePartial || ''); this._nativePartial = '';
+    }
     const r = this._recog; this._recog = null;
     if (r) { try { r.onend = null; r.stop(); } catch (e) {} }
     const id = this._recBlockId;
