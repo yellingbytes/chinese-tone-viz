@@ -523,8 +523,7 @@ export default class App extends React.Component {
    * =================================================================== */
   state = {
     blocks: [
-      { id: 1, x: 150, y: 250, text: '今天我想学习中文声调，\n它像一条隐藏的旋律。' },
-      { id: 2, x: 250, y: 620, text: '设计声调像一条波浪' }
+      { id: 1, x: 150, y: 250, text: '今天我想学习中文声调，\n它像一条隐藏的旋律。' }
     ],
     selectedIds: [1],
     editingId: null,
@@ -546,7 +545,7 @@ export default class App extends React.Component {
     showEdgeJoints: false,   // draw the seam dot where glyph cells meet
     toast: ''                // transient status message
   };
-  _nextId = 3;
+  _nextId = 2;
   _act = null;   // active pointer action
   _space = false; // spacebar held -> pan mode
   _undo = [];
