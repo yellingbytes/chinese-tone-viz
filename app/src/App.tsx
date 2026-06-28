@@ -575,6 +575,17 @@ export default class App extends React.Component {
     window.addEventListener('touchend', this._onTouchEnd);
     window.addEventListener('touchcancel', this._onTouchEnd);
     this.ensureUsedFonts();
+    this.centerView();   // center the default text in the viewport on load
+  }
+  // pan so the first block sits centered in the visible canvas (slightly biased
+  // up to clear the bottom tool dock)
+  centerView() {
+    const b = this.state.blocks[0]; if (!b) return;
+    const M = this.metrics();
+    const r = this.blockWorldRect(b, M);
+    const z = this.state.zoom || 1;
+    const cx = window.innerWidth / 2, cy = window.innerHeight / 2 - 24;
+    this.setState({ panX: cx - (r.x + r.w / 2) * z, panY: cy - (r.y + r.h / 2) * z });
   }
   componentWillUnmount() {
     window.removeEventListener('mousemove', this._onMove);
@@ -781,15 +792,9 @@ export default class App extends React.Component {
       this.setState(s => ({ editingId: s.editingId === id ? null : s.editingId }));
       return;
     }
-    this.setState(s => {
-      const b = s.blocks.find(b => b.id === id);
-      const empty = !b || !b.text || !b.text.trim();
-      return {
-        editingId: s.editingId === id ? null : s.editingId,
-        blocks: empty ? s.blocks.filter(b => b.id !== id) : s.blocks,
-        selectedIds: empty ? s.selectedIds.filter(x => x !== id) : s.selectedIds
-      };
-    });
+    // Leave the block in place even if empty — an empty box stays as a draggable
+    // placeholder you can reposition, then tap to type (delete via menu / ⌫).
+    this.setState(s => ({ editingId: s.editingId === id ? null : s.editingId }));
     this._editDirty = false;
   }
   onKey(e) {
