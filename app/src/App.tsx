@@ -523,7 +523,8 @@ export default class App extends React.Component {
    * =================================================================== */
   state = {
     blocks: [
-      { id: 1, x: 130, y: 300, text: '中文声调像一条波浪' }
+      { id: 1, x: 150, y: 250, text: '今天我想学习中文声调，\n它像一条隐藏的旋律。' },
+      { id: 2, x: 250, y: 620, text: '设计声调像一条波浪' }
     ],
     selectedIds: [1],
     editingId: null,
@@ -545,7 +546,7 @@ export default class App extends React.Component {
     showEdgeJoints: false,   // draw the seam dot where glyph cells meet
     toast: ''                // transient status message
   };
-  _nextId = 2;
+  _nextId = 3;
   _act = null;   // active pointer action
   _space = false; // spacebar held -> pan mode
   _undo = [];
@@ -781,9 +782,15 @@ export default class App extends React.Component {
       this.setState(s => ({ editingId: s.editingId === id ? null : s.editingId }));
       return;
     }
-    // Leave the block in place even if empty — an empty box stays as a draggable
-    // placeholder you can reposition, then tap to type (delete via menu / ⌫).
-    this.setState(s => ({ editingId: s.editingId === id ? null : s.editingId }));
+    this.setState(s => {
+      const b = s.blocks.find(b => b.id === id);
+      const empty = !b || !b.text || !b.text.trim();
+      return {
+        editingId: s.editingId === id ? null : s.editingId,
+        blocks: empty ? s.blocks.filter(b => b.id !== id) : s.blocks,
+        selectedIds: empty ? s.selectedIds.filter(x => x !== id) : s.selectedIds
+      };
+    });
     this._editDirty = false;
   }
   onKey(e) {
@@ -1425,13 +1432,10 @@ export default class App extends React.Component {
       style: { display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', fontSize: 14, fontWeight: 600, color: TOK.ink, background: TOK.panel, border: `1px solid ${TOK.sep}`, borderRadius: R.md, boxShadow: '0 1px 2px rgba(28,25,23,0.05)', cursor: 'pointer' }
     }, h(Comp, { size: 17, color: TOK.inkSoft }), label);
     const empty = (!st.blocks.length) ? h('div', {
-      style: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 0, padding: '0 28px', pointerEvents: 'none', zIndex: 5 }
+      style: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, pointerEvents: 'none', zIndex: 5 }
     },
-      h('div', { style: { fontFamily: "'Noto Sans SC',sans-serif", fontSize: 'clamp(30px, 8vw, 46px)', fontWeight: 600, color: TOK.ink, letterSpacing: '0.04em', lineHeight: 1.35, textAlign: 'center' } }, '中文声调像一条波浪'),
-      h('div', { style: { fontFamily: "'Noto Sans SC',sans-serif", fontSize: 14, fontWeight: 400, color: TOK.inkSoft, letterSpacing: '0.02em', marginTop: 14, textAlign: 'center' } }, '输入一句中文，或直接听写生成'),
-      h('div', { style: { display: 'flex', gap: 12, pointerEvents: 'auto', marginTop: 26 } },
-        pill(TextT, '输入文字', () => this.addTextBlock()),
-        pill(Microphone, '听写生成', () => this.dictateTap()))
+      h('div', { style: { fontSize: 16, fontWeight: 500, color: TOK.inkSoft, letterSpacing: '-0.01em' } }, 'Add text to start'),
+      h('div', { style: { display: 'flex', gap: 10, pointerEvents: 'auto' } }, pill(TextT, 'Text', () => this.addTextBlock()), pill(Microphone, 'Dictate', () => this.dictateTap()))
     ) : null;
 
     // -- bottom sheet shell (centered, capped width) ---------------------------
