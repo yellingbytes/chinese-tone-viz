@@ -11,7 +11,7 @@ import { Capacitor } from '@capacitor/core';
 import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import {
   ArrowCounterClockwise, ArrowClockwise, ShareFat, DotsThree,
-  TextT, Microphone, SlidersHorizontal, PlayCircle, Palette, TextAa,
+  TextT, Microphone, SlidersHorizontal, Palette, TextAa,
   X, Check, Pause, Waveform, Info, Trash,
 } from '@phosphor-icons/react';
 import { ToneWaveIcon, HanziSegmentIcon, ToneSegmentsIcon, ToneFrameIcon, EdgeJointsIcon } from './ToneIcons';
@@ -479,7 +479,14 @@ export default class App extends React.Component {
         if (s.kind === 'fold') this.foldClips(s, id, MB).forEach(d => defs.push(d));
         faces.push(this.glyphFace(s, faceFill, 1, null, MB, id + '-f', id));
       }
-      if (showSeg || motion) segs.push(this.segmentLine(s, faceFill, segOnly ? 0.95 : 0.4, id + '-s', MB));
+      if (showSeg || motion) {
+        // Hybrid (Hanzi + Segments): a bold accent-coloured tone line under the
+        // glyphs so the contour reads clearly. Segments Only: the block colour.
+        const segColor = segOnly ? faceFill : TOK.accent;
+        const segOp = segOnly ? 0.95 : 0.9;
+        const segW = segOnly ? 0.05 : 0.09;
+        segs.push(this.segmentLine(s, segColor, segOp, segW, id + '-s', MB));
+      }
       if (this.state.showEdgeJoints) joints.push(this.jointDot(s, faceFill, id + '-j', MB));
       if (this.state.showFrames) this.debugFrame(s, id, MB).forEach(f => frames.push(f));
     });
@@ -488,7 +495,7 @@ export default class App extends React.Component {
       style: { display: 'block', overflow: 'visible', pointerEvents: 'none' }
     },
       React.createElement('defs', { key: 'defs' }, defs),
-      segs.length ? React.createElement('g', { key: 'sg', style: { opacity: segOnly ? 1 : 0.9 } }, segs) : null,
+      segs.length ? React.createElement('g', { key: 'sg' }, segs) : null,
       React.createElement('g', { key: 'fc', style: { opacity: facesOpacity, transition: `opacity ${0.7 / (this.state.motionSpeed || 1)}s cubic-bezier(0.22,0.61,0.36,1)` } }, faces),
       joints.length ? React.createElement('g', { key: 'jt' }, joints) : null,
       frames.length ? React.createElement('g', { key: 'fr' }, frames) : null
@@ -496,8 +503,8 @@ export default class App extends React.Component {
   }
 
   // a single clean tone-segment line for a spec (the connecting wave)
-  segmentLine(spec, color, opacity, key, M) {
-    const w = M.FS * 0.05;
+  segmentLine(spec, color, opacity, widthMul, key, M) {
+    const w = M.FS * (widthMul || 0.05);
     if (spec.kind === 'fold') {
       const vx = spec.sx + spec.adv / 2, vy = spec.sy + spec.dip, ex = spec.sx + spec.adv, ey = spec.sy;
       return React.createElement('polyline', { key, points: `${spec.sx},${spec.sy} ${vx},${vy} ${ex},${ey}`, fill: 'none', stroke: color, strokeOpacity: opacity, strokeWidth: w, strokeLinecap: 'round', strokeLinejoin: 'round' });
@@ -691,9 +698,8 @@ export default class App extends React.Component {
   onUp(e) {
     const a = this._act; this._act = null; if (!a) return;
     if (a.type === 'maybe-marquee') {
-      // a real tap (no drag) on empty canvas: deselect if something was selected,
-      // otherwise tap-to-add a new text block at that point.
-      if (!a.moved && !a.add && !a.hadSel) { const p = this.toWorld(a.sx, a.sy); this.addTextBlockAt(p.x, p.y); }
+      // plain tap on empty canvas just clears selection (already done on pointer-down).
+      // Text blocks are created via the Text tool / empty-state buttons, not by tapping.
     } else if (a.type === 'marquee') {
       this.setState({ marquee: null });
     } else if ((a.type === 'drag' || a.type === 'resize') && a.moved) {
@@ -766,10 +772,7 @@ export default class App extends React.Component {
     if (e.touches.length >= 1) { this._pinch = null; this._act = null; return; }  // pinch -> fewer fingers: reset
     this._pinch = null;
     const a = this._act;
-    if (a && a.type === 'pan' && !a.moved) {
-      if (a.hadSel) this.setState({ selectedIds: [] });                            // tap empty -> deselect
-      else { const p = this.toWorld(a.sx, a.sy); this.addTextBlockAt(p.x, p.y); }  // or tap-to-add
-    }
+    if (a && a.type === 'pan' && !a.moved) this.setState({ selectedIds: [] });     // tap empty -> deselect
     this.onUp({});
   }
   finishEdit(id) {
@@ -1099,12 +1102,16 @@ export default class App extends React.Component {
         })));
       }
       // mini toolbar
+      const z = this.state.zoom || 1;
       children.push(React.createElement('div', {
         key: 'tb', style: {
-          position: 'absolute', left: '50%', top: '-40px', transform: 'translateX(-50%)',
-          display: 'flex', gap: '2px', padding: '4px', background: '#fff',
-          border: '1px solid rgba(20,18,12,0.10)', borderRadius: '9px',
-          boxShadow: '0 6px 20px rgba(20,18,12,0.14)', pointerEvents: 'auto', whiteSpace: 'nowrap'
+          // counter-scale by 1/zoom so the menu stays a constant screen size,
+          // anchored a constant gap above the block regardless of zoom level.
+          position: 'absolute', left: '50%', bottom: '100%', marginBottom: `${8 / z}px`,
+          transform: `translateX(-50%) scale(${1 / z})`, transformOrigin: 'center bottom',
+          display: 'flex', gap: '2px', padding: '4px', background: TOK.panel,
+          border: `1px solid ${TOK.sep}`, borderRadius: '10px',
+          boxShadow: '0 6px 20px rgba(28,25,23,0.14)', pointerEvents: 'auto', whiteSpace: 'nowrap'
         },
         onMouseDown: (e) => e.stopPropagation()
       },
@@ -1427,7 +1434,7 @@ export default class App extends React.Component {
     const empty = (!st.blocks.length) ? h('div', {
       style: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, pointerEvents: 'none', zIndex: 5 }
     },
-      h('div', { style: { fontSize: 16, fontWeight: 500, color: TOK.inkSoft, letterSpacing: '-0.01em' } }, 'Tap anywhere to add text'),
+      h('div', { style: { fontSize: 16, fontWeight: 500, color: TOK.inkSoft, letterSpacing: '-0.01em' } }, 'Add text to start'),
       h('div', { style: { display: 'flex', gap: 10, pointerEvents: 'auto' } }, pill(TextT, 'Text', () => this.addTextBlock()), pill(Microphone, 'Dictate', () => this.dictateTap()))
     ) : null;
 
@@ -1506,14 +1513,12 @@ export default class App extends React.Component {
       ['hanzi', TextT, 'Hanzi', 'Characters only.'],
       ['hanziSegments', HanziSegmentIcon, 'Hanzi + Segments', 'Characters riding the tone wave.'],
       ['segmentsOnly', ToneSegmentsIcon, 'Segments Only', 'Pure connected tone lines.'],
-      ['motionPreview', PlayCircle, 'Motion Preview', 'Watch Hanzi collapse into segments.'],
     ];
     const row = ([val, Comp, title, sub]) => {
       const active = st.canvasMode === val;
       return h('button', {
         key: val,
-        // Motion Preview plays the collapse animation, then closes so you can watch it.
-        onClick: () => { if (val === 'motionPreview') { this.playMotion(); this.closeSheet(); } else this.setCanvasMode(val); },
+        onClick: () => this.setCanvasMode(val),
         style: { display: 'flex', alignItems: 'center', gap: 13, width: '100%', padding: '11px 10px', background: active ? TOK.accentSoft : 'transparent', border: 'none', borderRadius: R.lg, textAlign: 'left', cursor: 'pointer' }
       },
         h('div', { style: { width: 28, display: 'flex', justifyContent: 'center' } }, h(Comp, { size: 25, color: active ? TOK.accent : TOK.ink })),
