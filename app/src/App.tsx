@@ -523,7 +523,7 @@ export default class App extends React.Component {
    * =================================================================== */
   state = {
     blocks: [
-      { id: 1, x: 150, y: 250, text: '今天我想学习中文声调，\n它像一条隐藏的旋律。' }
+      { id: 1, x: 150, y: 250, text: '中文声调像一条波浪\n开始发现隐藏的旋律。' }
     ],
     selectedIds: [1],
     editingId: null,
