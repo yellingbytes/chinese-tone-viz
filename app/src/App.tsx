@@ -12,17 +12,28 @@ import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import {
   ArrowCounterClockwise, ArrowClockwise, ShareFat, DotsThree,
   TextT, Microphone, SlidersHorizontal, PlayCircle, Palette, TextAa,
-  X, Check, Pause, Waveform, BoundingBox, GridFour, Info, Repeat, Gauge, Trash,
+  X, Check, Pause, Waveform, Info, Trash,
 } from '@phosphor-icons/react';
 import { ToneWaveIcon, HanziSegmentIcon, ToneSegmentsIcon, ToneFrameIcon, EdgeJointsIcon } from './ToneIcons';
 
-// shared design tokens (mirror docs/ios-redesign.md)
+// shared design tokens — shadcn/Tailwind "stone" palette (warm neutral) to match
+// the cream canvas, with a single blue accent for selection/active states.
 const TOK = {
-  canvas: '#f3f1ec', ink: '#17150f', inkSoft: '#6c685c', inkDim: '#b6b1a4',
-  accent: '#2f6bff', rec: '#e5484d', surface: 'rgba(255,255,255,0.86)',
-  sep: 'rgba(20,18,12,0.08)',
+  canvas: '#f3f1ec',                  // warm art surface
+  ink: '#1c1917',                     // stone-900 — primary text/icon
+  inkSoft: '#78716c',                 // stone-500 — secondary
+  inkDim: '#a8a29e',                  // stone-400 — disabled
+  accent: '#2563eb',                  // blue-600 — selection / active
+  accentSoft: 'rgba(37,99,235,0.08)',
+  rec: '#ef4444',                     // red-500 — listening dot only
+  surface: 'rgba(255,255,255,0.88)',  // floating bars
+  panel: '#ffffff',                   // sheets
+  sep: '#e7e5e4',                     // stone-200 — borders
+  sepSoft: 'rgba(28,25,23,0.06)',
 };
-const COLOR_CHIPS = ['#161410', '#e5484d', '#e8590c', '#f08c00', '#2f9e44', '#1971c2', '#2f6bff', '#7048e8', '#c2255c', '#ffffff'];
+// radius scale (px)
+const R = { sm: 8, md: 10, lg: 12, xl: 14, pill: 999, sheet: 16 };
+const COLOR_CHIPS = ['#1c1917', '#ef4444', '#f97316', '#eab308', '#22c55e', '#0ea5e9', '#2563eb', '#8b5cf6', '#ec4899', '#ffffff'];
 
 const pinyinPro = { pinyin };
 const OpenCC = (OpenCCImport && OpenCCImport.Converter)
@@ -1361,32 +1372,33 @@ export default class App extends React.Component {
       return h('button', {
         key: label, 'aria-label': label, title: label, disabled: dis,
         onClick: dis ? undefined : onClick,
-        style: { width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', borderRadius: 10, color: c, cursor: dis ? 'default' : 'pointer' }
-      }, h(Comp, { size: 22, color: c, weight: act ? 'fill' : 'regular' }));
+        onMouseEnter: (e) => { if (!dis) e.currentTarget.style.background = TOK.sepSoft; },
+        onMouseLeave: (e) => { e.currentTarget.style.background = act ? TOK.accentSoft : 'transparent'; },
+        style: { width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: act ? TOK.accentSoft : 'transparent', border: 'none', borderRadius: R.sm, color: c, cursor: dis ? 'default' : 'pointer', transition: 'background 0.15s' }
+      }, h(Comp, { size: 19, color: c, weight: act ? 'fill' : 'regular' }));
     };
     const dockItem = (Comp, label, onClick, opts = {}) => {
       const dis = !!opts.disabled, act = !!opts.active;
       const c = dis ? TOK.inkDim : (act ? TOK.accent : TOK.ink);
       return h('button', {
         key: label, disabled: dis, onClick: dis ? undefined : onClick,
-        style: { flex: 1, minWidth: 56, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3, padding: '6px 0', background: 'none', border: 'none', color: c, cursor: dis ? 'default' : 'pointer' }
+        style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '8px 4px', margin: '0 2px', background: act ? TOK.accentSoft : 'transparent', border: 'none', borderRadius: R.lg, color: c, cursor: dis ? 'default' : 'pointer', transition: 'background 0.15s' }
       },
-        h(Comp, { size: 23, color: c, weight: act ? 'fill' : 'regular' }),
-        h('span', { style: { fontSize: 11, fontWeight: 500, letterSpacing: '0.1px' } }, label),
-        h('span', { style: { width: 5, height: 5, borderRadius: '50%', background: act ? TOK.accent : 'transparent', marginTop: -1 } })
+        h(Comp, { size: 21, color: c, weight: act ? 'fill' : 'regular' }),
+        h('span', { style: { fontSize: 11, fontWeight: act ? 600 : 500, letterSpacing: '0.1px' } }, label)
       );
     };
 
-    // -- top app bar -----------------------------------------------------------
+    // -- top app bar (centered, capped width so it never stretches on desktop) -
     const topBar = h('div', {
-      style: { position: 'absolute', top: 0, left: 0, right: 0, paddingTop: 'env(safe-area-inset-top)', background: TOK.surface, backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)', borderBottom: `1px solid ${TOK.sep}`, zIndex: 50, userSelect: 'none' }
+      style: { position: 'absolute', top: 0, left: 0, right: 0, paddingTop: 'env(safe-area-inset-top)', display: 'flex', justifyContent: 'center', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
     },
-      h('div', { style: { height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 8px 0 12px' } },
+      h('div', { style: { pointerEvents: 'auto', width: 'calc(100% - 16px)', maxWidth: 680, marginTop: 8, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 6px 0 10px', background: TOK.surface, backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: `1px solid ${TOK.sep}`, borderRadius: R.xl, boxShadow: '0 1px 2px rgba(28,25,23,0.04),0 6px 22px rgba(28,25,23,0.06)' } },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 9 } },
-          h('div', { style: { width: 28, height: 28, borderRadius: 8, background: TOK.ink, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Noto Sans SC',sans-serif", fontWeight: 800, fontSize: 17, lineHeight: 1 } }, '聲'),
-          h('span', { style: { fontSize: 15, fontWeight: 600, letterSpacing: '-0.2px', color: TOK.ink } }, 'Tone Canvas')
+          h('div', { style: { width: 26, height: 26, borderRadius: R.sm, background: TOK.ink, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Noto Sans SC',sans-serif", fontWeight: 800, fontSize: 15, lineHeight: 1 } }, '聲'),
+          h('span', { style: { fontSize: 14.5, fontWeight: 600, letterSpacing: '-0.01em', color: TOK.ink } }, 'Tone Canvas')
         ),
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 2 } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 1 } },
           iconBtn(ArrowCounterClockwise, 'Undo', () => this.undo(), { disabled: !this._undo.length }),
           iconBtn(ArrowClockwise, 'Redo', () => this.redo(), { disabled: !this._redo.length }),
           iconBtn(ShareFat, 'Share', () => this.share(), { disabled: !st.blocks.length }),
@@ -1395,37 +1407,38 @@ export default class App extends React.Component {
       )
     );
 
-    // -- bottom tool dock ------------------------------------------------------
+    // -- bottom tool dock (centered, capped width; Motion removed) -------------
     const dock = h('div', {
-      style: { position: 'absolute', left: 8, right: 8, bottom: 'calc(8px + env(safe-area-inset-bottom))', height: 64, display: 'flex', alignItems: 'stretch', background: TOK.surface, backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)', border: `1px solid ${TOK.sep}`, borderRadius: 20, boxShadow: '0 8px 30px rgba(20,18,12,0.10)', zIndex: 50, userSelect: 'none' }
+      style: { position: 'absolute', left: 0, right: 0, bottom: 'calc(env(safe-area-inset-bottom) + 10px)', display: 'flex', justifyContent: 'center', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
     },
-      dockItem(TextT, 'Text', () => this.addTextBlock()),
-      dockItem(Microphone, 'Dictate', () => this.dictateTap(), { active: st.recording || st.activeSheet === 'dictation' }),
-      dockItem(ToneWaveIcon, 'Tone', () => this.openSheet('tone'), { disabled: !hasSel, active: st.activeSheet === 'tone' }),
-      dockItem(SlidersHorizontal, 'Style', () => this.openSheet('style'), { disabled: !hasSel, active: st.activeSheet === 'style' }),
-      dockItem(PlayCircle, 'Motion', () => this.openSheet('motion'), { disabled: !hasSel, active: st.activeSheet === 'motion' })
+      h('div', { style: { pointerEvents: 'auto', width: 'calc(100% - 24px)', maxWidth: 420, display: 'flex', padding: 6, background: TOK.surface, backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: `1px solid ${TOK.sep}`, borderRadius: 18, boxShadow: '0 1px 2px rgba(28,25,23,0.04),0 10px 30px rgba(28,25,23,0.08)' } },
+        dockItem(TextT, 'Text', () => this.addTextBlock()),
+        dockItem(Microphone, 'Dictate', () => this.dictateTap(), { active: st.recording || st.activeSheet === 'dictation' }),
+        dockItem(ToneWaveIcon, 'Tone', () => this.openSheet('tone'), { disabled: !hasSel, active: st.activeSheet === 'tone' }),
+        dockItem(SlidersHorizontal, 'Style', () => this.openSheet('style'), { disabled: !hasSel, active: st.activeSheet === 'style' })
+      )
     );
 
     // -- empty state -----------------------------------------------------------
     const pill = (Comp, label, onClick) => h('button', {
       key: label, onClick,
-      style: { display: 'flex', alignItems: 'center', gap: 7, padding: '11px 18px', fontSize: 15, fontWeight: 600, color: TOK.ink, background: '#fff', border: `1px solid ${TOK.sep}`, borderRadius: 12, boxShadow: '0 2px 10px rgba(20,18,12,0.06)', cursor: 'pointer' }
-    }, h(Comp, { size: 19, color: TOK.ink }), label);
+      style: { display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', fontSize: 14, fontWeight: 600, color: TOK.ink, background: TOK.panel, border: `1px solid ${TOK.sep}`, borderRadius: R.md, boxShadow: '0 1px 2px rgba(28,25,23,0.05)', cursor: 'pointer' }
+    }, h(Comp, { size: 17, color: TOK.inkSoft }), label);
     const empty = (!st.blocks.length) ? h('div', {
-      style: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18, pointerEvents: 'none', zIndex: 5 }
+      style: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, pointerEvents: 'none', zIndex: 5 }
     },
-      h('div', { style: { fontSize: 18, fontWeight: 500, color: TOK.inkSoft } }, 'Tap to add text'),
-      h('div', { style: { display: 'flex', gap: 12, pointerEvents: 'auto' } }, pill(TextT, 'Text', () => this.addTextBlock()), pill(Microphone, 'Dictate', () => this.dictateTap()))
+      h('div', { style: { fontSize: 16, fontWeight: 500, color: TOK.inkSoft, letterSpacing: '-0.01em' } }, 'Tap anywhere to add text'),
+      h('div', { style: { display: 'flex', gap: 10, pointerEvents: 'auto' } }, pill(TextT, 'Text', () => this.addTextBlock()), pill(Microphone, 'Dictate', () => this.dictateTap()))
     ) : null;
 
-    // -- bottom sheet shell ----------------------------------------------------
-    const sheet = (title, body, onClose) => h('div', { key: 'sheet', style: { position: 'fixed', inset: 0, zIndex: 80 } },
-      h('div', { onClick: onClose, style: { position: 'absolute', inset: 0, background: 'rgba(20,18,12,0.20)' } }),
-      h('div', { style: { position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '82vh', overflowY: 'auto', background: '#fff', borderRadius: '24px 24px 0 0', boxShadow: '0 -10px 44px rgba(20,18,12,0.20)', padding: '8px 18px calc(18px + env(safe-area-inset-bottom))' } },
-        h('div', { style: { width: 38, height: 5, borderRadius: 3, background: 'rgba(20,18,12,0.16)', margin: '0 auto 10px' } }),
-        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 } },
-          h('div', { style: { fontSize: 18, fontWeight: 600, color: TOK.ink } }, title),
-          h('button', { onClick: onClose, 'aria-label': 'Close', style: { width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, border: 'none', background: 'rgba(20,18,12,0.05)', cursor: 'pointer', color: TOK.inkSoft } }, h(X, { size: 17 }))
+    // -- bottom sheet shell (centered, capped width) ---------------------------
+    const sheet = (title, body, onClose) => h('div', { key: 'sheet', style: { position: 'fixed', inset: 0, zIndex: 80, display: 'flex', justifyContent: 'center', alignItems: 'flex-end' } },
+      h('div', { onClick: onClose, style: { position: 'absolute', inset: 0, background: 'rgba(28,25,23,0.28)', backdropFilter: 'blur(1px)' } }),
+      h('div', { style: { position: 'relative', width: '100%', maxWidth: 460, maxHeight: '82vh', overflowY: 'auto', background: TOK.panel, border: `1px solid ${TOK.sep}`, borderBottom: 'none', borderRadius: `${R.sheet}px ${R.sheet}px 0 0`, boxShadow: '0 -8px 40px rgba(28,25,23,0.16)', padding: '8px 18px calc(20px + env(safe-area-inset-bottom))' } },
+        h('div', { style: { width: 36, height: 5, borderRadius: 3, background: TOK.sep, margin: '0 auto 12px' } }),
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 } },
+          h('div', { style: { fontSize: 17, fontWeight: 600, letterSpacing: '-0.01em', color: TOK.ink } }, title),
+          h('button', { onClick: onClose, 'aria-label': 'Close', style: { width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: R.sm, border: `1px solid ${TOK.sep}`, background: TOK.panel, cursor: 'pointer', color: TOK.inkSoft } }, h(X, { size: 16 }))
         ),
         body
       )
@@ -1434,7 +1447,7 @@ export default class App extends React.Component {
     const activeSheet = this.renderActiveSheet(v, h, sheet);
 
     // -- toast -----------------------------------------------------------------
-    const toast = st.toast ? h('div', { key: 'toast', style: { position: 'fixed', left: '50%', bottom: 'calc(96px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', background: TOK.ink, color: '#fff', fontSize: 13, fontWeight: 500, padding: '9px 15px', borderRadius: 10, zIndex: 90, boxShadow: '0 6px 20px rgba(20,18,12,0.25)' } }, st.toast) : null;
+    const toast = st.toast ? h('div', { key: 'toast', style: { position: 'fixed', left: '50%', bottom: 'calc(100px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', background: TOK.ink, color: '#fff', fontSize: 13, fontWeight: 500, padding: '9px 15px', borderRadius: R.md, zIndex: 90, boxShadow: '0 8px 24px rgba(28,25,23,0.28)' } }, st.toast) : null;
 
     return h('div', {
       style: { position: 'fixed', inset: 0, overflow: 'hidden', background: TOK.canvas, fontFamily: "system-ui,-apple-system,'Segoe UI',sans-serif", color: TOK.ink, WebkitFontSmoothing: 'antialiased' }
@@ -1448,7 +1461,6 @@ export default class App extends React.Component {
       case 'dictation': return this.sheetDictation(v, h, sheet);
       case 'tone': return this.sheetTone(v, h, sheet);
       case 'style': return this.sheetStyle(v, h, sheet);
-      case 'motion': return this.sheetMotion(v, h, sheet);
       case 'more': return this.sheetMore(v, h, sheet);
       default: return null;
     }
@@ -1462,17 +1474,27 @@ export default class App extends React.Component {
 
   sheetDictation(v, h, sheet) {
     const st = this.state, rec = st.recording;
-    const body = h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '6px 0 4px' } },
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, color: rec ? TOK.rec : TOK.inkSoft, fontSize: 14, fontWeight: 600 } },
-        h('span', { style: { width: 9, height: 9, borderRadius: '50%', background: rec ? TOK.rec : TOK.inkDim, animation: rec ? 'tc-pulse 1.2s ease-out infinite' : 'none' } }),
-        rec ? (st.recStatus || 'Listening…') : 'Paused'
+    // shadcn-style buttons (shared visual language with the other sheets)
+    const btnOutline = (Comp, label, onClick) => h('button', { onClick, style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 44, borderRadius: R.md, border: `1px solid ${TOK.sep}`, background: TOK.panel, color: TOK.ink, fontWeight: 600, fontSize: 14, cursor: 'pointer' } }, h(Comp, { size: 17 }), label);
+    const btnPrimary = (Comp, label, onClick) => h('button', { onClick, style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 44, borderRadius: R.md, border: 'none', background: TOK.ink, color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' } }, h(Comp, { size: 17, weight: 'bold' }), label);
+
+    const body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 16 } },
+      // status card
+      h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '22px 16px', borderRadius: R.lg, border: `1px solid ${TOK.sep}`, background: '#fafaf9' } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, color: rec ? TOK.rec : TOK.inkSoft, fontSize: 13.5, fontWeight: 600 } },
+          h('span', { style: { width: 8, height: 8, borderRadius: '50%', background: rec ? TOK.rec : TOK.inkDim, animation: rec ? 'tc-pulse 1.2s ease-out infinite' : 'none' } }),
+          rec ? (st.recStatus || 'Listening…') : 'Paused'
+        ),
+        h(Waveform, { size: 38, color: rec ? TOK.ink : TOK.inkDim, weight: 'duotone' }),
+        h('div', { style: { fontSize: 12.5, color: TOK.inkSoft, textAlign: 'center' } }, 'Speak Mandarin — text appears on the canvas live.')
       ),
-      h(Waveform, { size: 40, color: rec ? TOK.ink : TOK.inkDim, weight: 'duotone' }),
-      h('div', { style: { fontSize: 12, color: TOK.inkSoft } }, 'Speak Mandarin — text appears on the canvas live.'),
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: 14, marginTop: 4 } },
-        h('button', { onClick: () => this.cancelDictation(), style: { display: 'flex', alignItems: 'center', gap: 6, padding: '11px 16px', borderRadius: 12, border: `1px solid ${TOK.sep}`, background: '#fff', color: TOK.inkSoft, fontWeight: 600, fontSize: 14, cursor: 'pointer' } }, h(X, { size: 17 }), 'Cancel'),
-        h('button', { onClick: () => (rec ? this.stopDictation() : this.startDictation()), 'aria-label': 'Pause', style: { width: 52, height: 52, borderRadius: 26, border: 'none', background: 'rgba(20,18,12,0.06)', color: TOK.ink, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' } }, h(rec ? Pause : Microphone, { size: 22, weight: 'fill' })),
-        h('button', { onClick: () => this.insertDictation(), style: { display: 'flex', alignItems: 'center', gap: 6, padding: '11px 18px', borderRadius: 12, border: 'none', background: TOK.accent, color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' } }, h(Check, { size: 17, weight: 'bold' }), 'Insert')
+      // pause / resume (secondary, full width)
+      h('button', { onClick: () => (rec ? this.stopDictation() : this.startDictation()), style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, height: 44, borderRadius: R.md, border: `1px solid ${TOK.sep}`, background: '#fafaf9', color: TOK.ink, fontWeight: 600, fontSize: 14, cursor: 'pointer' } },
+        h(rec ? Pause : Microphone, { size: 18, weight: 'fill' }), rec ? 'Pause' : 'Resume'),
+      // cancel / insert
+      h('div', { style: { display: 'flex', gap: 10 } },
+        btnOutline(X, 'Cancel', () => this.cancelDictation()),
+        btnPrimary(Check, 'Insert', () => this.insertDictation())
       )
     );
     return sheet('Dictate', body, () => this.closeSheet());
@@ -1490,18 +1512,19 @@ export default class App extends React.Component {
       const active = st.canvasMode === val;
       return h('button', {
         key: val,
-        onClick: () => { if (val === 'motionPreview') { this.setState({ canvasMode: val }); this.openSheet('motion'); } else this.setCanvasMode(val); },
-        style: { display: 'flex', alignItems: 'center', gap: 13, width: '100%', padding: '12px 8px', background: 'none', border: 'none', borderRadius: 12, textAlign: 'left', cursor: 'pointer' }
+        // Motion Preview plays the collapse animation, then closes so you can watch it.
+        onClick: () => { if (val === 'motionPreview') { this.playMotion(); this.closeSheet(); } else this.setCanvasMode(val); },
+        style: { display: 'flex', alignItems: 'center', gap: 13, width: '100%', padding: '11px 10px', background: active ? TOK.accentSoft : 'transparent', border: 'none', borderRadius: R.lg, textAlign: 'left', cursor: 'pointer' }
       },
-        h('div', { style: { width: 28, display: 'flex', justifyContent: 'center', color: active ? TOK.accent : TOK.ink } }, h(Comp, { size: 26, color: active ? TOK.accent : TOK.ink })),
+        h('div', { style: { width: 28, display: 'flex', justifyContent: 'center' } }, h(Comp, { size: 25, color: active ? TOK.accent : TOK.ink })),
         h('div', { style: { flex: 1 } },
-          h('div', { style: { fontSize: 15, fontWeight: 600, color: TOK.ink } }, title),
+          h('div', { style: { fontSize: 14.5, fontWeight: 600, color: TOK.ink } }, title),
           h('div', { style: { fontSize: 12.5, color: TOK.inkSoft, marginTop: 1 } }, sub)
         ),
-        active ? h(Check, { size: 19, weight: 'bold', color: TOK.accent }) : null
+        active ? h(Check, { size: 18, weight: 'bold', color: TOK.accent }) : null
       );
     };
-    return sheet('Tone Mode', h('div', null, opts.map(row)), () => this.closeSheet());
+    return sheet('Tone Mode', h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } }, opts.map(row)), () => this.closeSheet());
   }
 
   sheetStyle(v, h, sheet) {
@@ -1528,7 +1551,7 @@ export default class App extends React.Component {
     const fontCell = (f) => {
       const sel = v.fontVal === f.id;
       return h('button', { key: f.id, onClick: () => this.applyStyle({ font: f.id }), title: f.label,
-        style: { flex: '0 0 auto', minWidth: 64, padding: '8px 12px', borderRadius: 12, border: `1px solid ${sel ? TOK.accent : TOK.sep}`, background: sel ? 'rgba(47,107,255,0.06)' : '#fff', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 } },
+        style: { flex: '0 0 auto', minWidth: 64, padding: '8px 12px', borderRadius: R.md, border: `1px solid ${sel ? TOK.accent : TOK.sep}`, background: sel ? TOK.accentSoft : TOK.panel, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 } },
         h('span', { style: { fontSize: 22, lineHeight: 1, color: TOK.ink, fontFamily: this.fontStack(f.id, st.script) } }, '字'),
         h('span', { style: { fontSize: 10.5, color: sel ? TOK.accent : TOK.inkSoft, fontWeight: 600, whiteSpace: 'nowrap' } }, f.label.split(' · ')[0])
       );
@@ -1552,27 +1575,6 @@ export default class App extends React.Component {
       this.sectionHeader(h, null, 'Script'), scriptRow
     );
     return sheet('Style', body, () => this.closeSheet());
-  }
-
-  sheetMotion(v, h, sheet) {
-    const st = this.state;
-    const speedSeg = (label, val) => h('button', { key: val, onClick: () => this.setState({ motionSpeed: val }),
-      style: { flex: 1, padding: '8px 0', fontSize: 14, fontWeight: 700, borderRadius: 8, border: 'none', cursor: 'pointer', color: st.motionSpeed === val ? '#fff' : TOK.inkSoft, background: st.motionSpeed === val ? TOK.ink : 'transparent' } }, label);
-    const body = h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 } },
-      h('button', { onClick: () => this.playMotion(), 'aria-label': 'Play', style: { border: 'none', background: 'none', cursor: 'pointer', color: TOK.accent } }, h(PlayCircle, { size: 68, weight: 'fill', color: TOK.accent })),
-      h('div', { style: { fontSize: 12.5, color: TOK.inkSoft, textAlign: 'center' } }, 'Hanzi collapse into their pure tone segments.'),
-      h('div', { style: { width: '100%' } },
-        this.sectionHeader(h, Gauge, 'Speed'),
-        h('div', { style: { display: 'flex', gap: 3, padding: 3, background: 'rgba(20,18,12,0.06)', borderRadius: 10 } }, speedSeg('0.5×', 0.5), speedSeg('1×', 1), speedSeg('2×', 2))
-      ),
-      h('button', { onClick: () => this.setState(s => ({ motionLoop: !s.motionLoop })),
-        style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '12px 4px', background: 'none', border: 'none', cursor: 'pointer' } },
-        h('span', { style: { display: 'flex', alignItems: 'center', gap: 8, color: TOK.ink, fontWeight: 600, fontSize: 15 } }, h(Repeat, { size: 18, color: TOK.ink }), 'Loop'),
-        h('span', { style: { width: 42, height: 26, borderRadius: 13, background: st.motionLoop ? TOK.accent : 'rgba(20,18,12,0.15)', position: 'relative', transition: 'background 0.15s' } },
-          h('span', { style: { position: 'absolute', top: 3, left: st.motionLoop ? 19 : 3, width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'left 0.15s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' } }))
-      )
-    );
-    return sheet('Motion', body, () => this.closeSheet());
   }
 
   sheetMore(v, h, sheet) {
