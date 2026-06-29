@@ -846,9 +846,17 @@ export default class App extends React.Component {
       this.setState(s => ({ editingId: s.editingId === id ? null : s.editingId }));
       return;
     }
-    // Leave the block in place even if empty — an empty box stays as a draggable
-    // placeholder you can reposition, then tap to type (delete via menu / ⌫).
-    this.setState(s => ({ editingId: s.editingId === id ? null : s.editingId }));
+    // If nothing was typed, discard the block so no empty placeholder lingers
+    // on the canvas; otherwise just exit edit mode.
+    this.setState(s => {
+      const b = s.blocks.find(b => b.id === id);
+      const empty = !b || !b.text || !b.text.trim();
+      return {
+        editingId: s.editingId === id ? null : s.editingId,
+        blocks: empty ? s.blocks.filter(b => b.id !== id) : s.blocks,
+        selectedIds: empty ? s.selectedIds.filter(x => x !== id) : s.selectedIds
+      };
+    });
     this._editDirty = false;
   }
   onKey(e) {
