@@ -229,6 +229,12 @@ export default class App extends React.Component {
     return { FS, ADV, SLOPE, FOLD_ANGLE, LINE_SPACING, HANZI_GAP, PUNCT_GAP, weight: 700 };
   }
 
+  // metrics scaled by a per-block factor (font size). Ratios (slope/angle) stay put.
+  scaleMetrics(M, s) {
+    if (!s || s === 1) return M;
+    return { ...M, FS: M.FS * s, ADV: M.ADV * s, LINE_SPACING: M.LINE_SPACING * s, HANZI_GAP: M.HANZI_GAP * s, PUNCT_GAP: M.PUNCT_GAP * s };
+  }
+
   // CJK line-breaking (kinsoku) — characters that may not begin / end a wrapped line.
   static NO_LINE_START = '，。、；：？！）】》」』〉”’,.;:?!)…%·';   // can't start a line (hang instead)
   static NO_LINE_END   = '（【《「『〈“‘(';                          // can't end a line (carry down)
@@ -455,9 +461,9 @@ export default class App extends React.Component {
   }
 
   renderBlockSvg(block, M) {
-    // per-block colour + variable-font weight
+    // per-block size (scale) + colour + variable-font weight
     const MB = {
-      ...M,
+      ...this.scaleMetrics(M, block.scale || 1),
       weight: block.weight != null ? block.weight : M.weight,
       fontFamily: this.fontStack(block.font || this.state.defFont, this.state.script)
     };
@@ -620,7 +626,7 @@ export default class App extends React.Component {
     this.setState({ blocks: s.blocks, selectedIds: s.selectedIds, editingId: null });
   }
   blockWorldRect(b, M) {
-    const { bbox } = this.layoutBlock(this.glyphsText(b.text), M, b.width);
+    const { bbox } = this.layoutBlock(this.glyphsText(b.text), this.scaleMetrics(M, b.scale || 1), b.width);
     const w = (!b.text ? 240 : bbox.w), h = (!b.text ? 50 : bbox.h);
     return { x: b.x + bbox.x, y: b.y + bbox.y, w, h };
   }
@@ -677,6 +683,37 @@ export default class App extends React.Component {
     this.pushHistory();
     this.setState(s => ({ blocks: s.blocks.map(x => { if (x.id !== id) return x; const nb = { ...x }; delete nb.width; return nb; }) }));
   }
+  // start scaling a block by dragging a corner handle (scales about its centre)
+  onScaleDown(e, id) {
+    if (e.type === 'mousedown' && e.button !== 0) return;
+    e.stopPropagation();
+    const b = this.state.blocks.find(x => x.id === id); if (!b) return;
+    const r = this.blockWorldRect(b, this.metrics());
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    const t = e.touches ? e.touches[0] : e;
+    const w = this.toWorld(t.clientX, t.clientY);
+    const startDist = Math.hypot(w.x - cx, w.y - cy) || 1;
+    this.setState({ selectedIds: [id] });
+    this._act = { type: 'scale', id, cx, cy, startDist, startScale: b.scale || 1, moved: false, preSnap: this.snap() };
+  }
+  // set a block's scale while keeping its centre fixed
+  applyScale(id, s, cx, cy) {
+    s = Math.max(0.25, Math.min(6, s));
+    const b = this.state.blocks.find(x => x.id === id); if (!b) return;
+    const { bbox } = this.layoutBlock(this.glyphsText(b.text), this.scaleMetrics(this.metrics(), s), b.width);
+    const nx = cx - (bbox.x + bbox.w / 2), ny = cy - (bbox.y + bbox.h / 2);
+    this.setState(st => ({ blocks: st.blocks.map(x => x.id === id ? { ...x, scale: s, x: nx, y: ny } : x) }));
+  }
+  // scale every selected block to `s` about its own centre (Size presets)
+  applyScaleSelected(s) {
+    this.pushHistory();
+    const M = this.metrics();
+    this.state.selectedIds.forEach(id => {
+      const b = this.state.blocks.find(x => x.id === id); if (!b) return;
+      const r = this.blockWorldRect(b, M);
+      this.applyScale(id, s, r.x + r.w / 2, r.y + r.h / 2);
+    });
+  }
   onMove(e) {
     const a = this._act; if (!a) return;
     const dx = e.clientX - a.sx, dy = e.clientY - a.sy;
@@ -699,6 +736,10 @@ export default class App extends React.Component {
       const MINW = this.metrics().ADV * 1.2;             // ~one character minimum
       const w = Math.max(MINW, a.startWidth + dx / z);
       this.setState(s => ({ blocks: s.blocks.map(b => b.id === a.id ? { ...b, width: w } : b) }));
+    } else if (a.type === 'scale') {
+      const w = this.toWorld(e.clientX, e.clientY);
+      const dist = Math.hypot(w.x - a.cx, w.y - a.cy);
+      this.applyScale(a.id, a.startScale * (dist / a.startDist), a.cx, a.cy);
     } else {
       a.type = 'drag';
       const z = this.state.zoom, wdx = dx / z, wdy = dy / z;
@@ -712,7 +753,7 @@ export default class App extends React.Component {
       // Text blocks are created via the Text tool / empty-state buttons, not by tapping.
     } else if (a.type === 'marquee') {
       this.setState({ marquee: null });
-    } else if ((a.type === 'drag' || a.type === 'resize') && a.moved) {
+    } else if ((a.type === 'drag' || a.type === 'resize' || a.type === 'scale') && a.moved) {
       this._undo.push(a.preSnap); if (this._undo.length > 120) this._undo.shift(); this._redo = [];
     }
   }
@@ -762,17 +803,30 @@ export default class App extends React.Component {
     this._act = { type: 'resize', id, sx: t.clientX, startWidth, moved: false, preSnap: this.snap() };
   }
   onTouchMove(e) {
-    if (e.touches.length >= 2) {                          // pinch zoom + two-finger pan
+    if (e.touches.length >= 2) {                          // two fingers
       e.preventDefault();
       this._act = null;
       const a = e.touches[0], b = e.touches[1];
       const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
       const cx = (a.clientX + b.clientX) / 2, cy = (a.clientY + b.clientY) / 2;
-      if (!this._pinch) { this._pinch = { dist, cx, cy }; return; }
-      if (this._pinch.dist > 0) this.zoomBy(dist / this._pinch.dist, cx, cy);
-      const ddx = cx - this._pinch.cx, ddy = cy - this._pinch.cy;
-      if (ddx || ddy) this.setState(s => ({ panX: s.panX + ddx, panY: s.panY + ddy }));
-      this._pinch = { dist, cx, cy };
+      if (!this._pinch) {
+        // pinch on a single selected block -> scale the text; otherwise zoom canvas
+        const bid = this.state.selectedIds.length === 1 ? this.state.selectedIds[0] : null;
+        let pcx, pcy;
+        if (bid != null) { const r = this.blockWorldRect(this.state.blocks.find(x => x.id === bid), this.metrics()); pcx = r.x + r.w / 2; pcy = r.y + r.h / 2; }
+        this._pinch = { dist, cx, cy, bid, pcx, pcy };
+        return;
+      }
+      const factor = this._pinch.dist > 0 ? dist / this._pinch.dist : 1;
+      if (this._pinch.bid != null) {
+        const cur = this.state.blocks.find(x => x.id === this._pinch.bid);
+        if (cur) this.applyScale(this._pinch.bid, (cur.scale || 1) * factor, this._pinch.pcx, this._pinch.pcy);
+      } else {
+        this.zoomBy(factor, cx, cy);
+        const ddx = cx - this._pinch.cx, ddy = cy - this._pinch.cy;
+        if (ddx || ddy) this.setState(s => ({ panX: s.panX + ddx, panY: s.panY + ddy }));
+      }
+      this._pinch = { ...this._pinch, dist, cx, cy };
       return;
     }
     if (this._pinch) return;                              // wait for all fingers up after a pinch
@@ -1062,7 +1116,7 @@ export default class App extends React.Component {
    *  render
    * =================================================================== */
   renderBlockNode(block, M) {
-    const lay = this.layoutBlock(this.glyphsText(block.text), M, block.width);
+    const lay = this.layoutBlock(this.glyphsText(block.text), this.scaleMetrics(M, block.scale || 1), block.width);
     const { bbox } = lay;
     // positioned in WORLD space — the world container applies pan + zoom.
     const selected = this.state.selectedIds.includes(block.id);
@@ -1080,11 +1134,20 @@ export default class App extends React.Component {
         }
       }));
       ['-7px -7px', '-7px auto auto calc(100% - 7px)'].forEach(() => {});
-      const corner = (s) => React.createElement('div', { key: 'c' + s.left + s.top, style: { position: 'absolute', width: '9px', height: '9px', background: '#fff', border: '1.5px solid #2f6bff', borderRadius: '2px', ...s } });
-      children.push(corner({ left: '-6px', top: '-6px' }));
-      children.push(corner({ right: '-6px', top: '-6px' }));
-      children.push(corner({ left: '-6px', bottom: '-6px' }));
-      children.push(corner({ right: '-6px', bottom: '-6px' }));
+      // corner handles — drag any corner to scale the block (about its centre)
+      const zc = this.state.zoom || 1;
+      const corner = (s, cur) => React.createElement('div', {
+        key: 'c' + s.left + s.top + s.right + s.bottom,
+        onMouseDown: (e) => this.onScaleDown(e, block.id),
+        onTouchStart: (e) => this.onScaleDown(e, block.id),
+        title: 'Drag to resize',
+        style: { position: 'absolute', width: `${14 / zc}px`, height: `${14 / zc}px`, background: '#fff', border: `${1.5 / zc}px solid ${TOK.accent}`, borderRadius: `${3 / zc}px`, cursor: cur, pointerEvents: 'auto', touchAction: 'none', zIndex: 24, ...s }
+      });
+      const off = `${-7 / zc}px`;
+      children.push(corner({ left: off, top: off }, 'nwse-resize'));
+      children.push(corner({ right: off, top: off }, 'nesw-resize'));
+      children.push(corner({ left: off, bottom: off }, 'nesw-resize'));
+      children.push(corner({ right: off, bottom: off }, 'nwse-resize'));
       // right-edge wrap handle (Figma-style): drag to set the wrap width, double-click for auto
       if (!editing) {
         children.push(React.createElement('div', {
@@ -1234,6 +1297,7 @@ export default class App extends React.Component {
     const panning = this._act && this._act.type === 'pan';
     const bg = React.createElement('div', {
       key: 'bg', onMouseDown: (e) => this.onBgDown(e), onTouchStart: (e) => this.onBgTouchStart(e),
+      onDoubleClick: (e) => { const p = this.toWorld(e.clientX, e.clientY); this.addTextBlockAt(p.x, p.y); },
       style: { position: 'absolute', inset: 0, touchAction: 'none', cursor: panning ? 'grabbing' : (this._space ? 'grab' : 'default') }
     });
 
@@ -1573,8 +1637,18 @@ export default class App extends React.Component {
         style: { flex: 1, padding: '9px 0', fontSize: 16, fontWeight: 700, fontFamily: "'Noto Sans SC','Noto Sans TC',sans-serif", borderRadius: 8, border: 'none', cursor: 'pointer', color: active ? '#fff' : TOK.inkSoft, background: active ? TOK.ink : 'transparent' } }, label);
     };
     const scriptRow = h('div', { style: { display: 'flex', gap: 3, padding: 3, background: 'rgba(20,18,12,0.06)', borderRadius: 11 } }, seg('简 Simplified', 'simplified'), seg('繁 Traditional', 'traditional'));
+    // Size (font-size presets — scales the whole block)
+    const selBlk = st.blocks.find(b => st.selectedIds.includes(b.id));
+    const curScale = selBlk ? (selBlk.scale || 1) : 1;
+    const sizes = [['S', 0.6], ['M', 1], ['L', 1.6], ['XL', 2.4]];
+    const nearest = sizes.reduce((a, b) => Math.abs(b[1] - curScale) < Math.abs(a[1] - curScale) ? b : a, sizes[1]);
+    const sizeSeg = (s) => h('button', { key: s[0], onClick: () => this.applyScaleSelected(s[1]),
+      style: { flex: 1, padding: '9px 0', fontSize: 14, fontWeight: 700, borderRadius: 8, border: 'none', cursor: 'pointer', color: nearest[0] === s[0] ? '#fff' : TOK.inkSoft, background: nearest[0] === s[0] ? TOK.ink : 'transparent' } }, s[0]);
+    const sizeRow = h('div', { style: { display: 'flex', gap: 3, padding: 3, background: 'rgba(28,25,23,0.06)', borderRadius: 11 } }, sizes.map(sizeSeg));
 
     const body = h('div', { style: { display: 'flex', flexDirection: 'column' } },
+      this.sectionHeader(h, TextAa, 'Size'), sizeRow,
+      h('div', { style: { height: 18 } }),
       this.sectionHeader(h, Palette, 'Color'), colorRow,
       h('div', { style: { height: 18 } }),
       this.sectionHeader(h, SlidersHorizontal, 'Weight'), weightRow,
