@@ -1125,8 +1125,8 @@ export default class App extends React.Component {
     const left = block.x + bbox.x, top = block.y + bbox.y;
 
     const children = [];
-    // selection frame
-    if (selected) {
+    // selection frame — hidden while editing (the textarea is the only box then)
+    if (selected && !editing) {
       children.push(React.createElement('div', {
         key: 'sel', style: {
           position: 'absolute', inset: '-2px', border: '1.5px solid #2f6bff',
@@ -1187,13 +1187,16 @@ export default class App extends React.Component {
         React.createElement('button', { key: 'x', onClick: () => this.del(), style: { ...this.miniBtn(), color: '#d23b3b' } }, 'Delete')
       ));
     }
-    // the glyph svg / placeholder
-    if (empty && !editing) {
-      children.push(React.createElement('div', {
-        key: 'ph', style: { padding: '14px 20px', color: '#a8a395', fontSize: '15px', fontWeight: 500, fontStyle: 'italic', whiteSpace: 'nowrap' }
-      }, '输入中文… type or paste'));
-    } else {
-      children.push(React.createElement('div', { key: 'svg', style: { position: 'absolute', left: 0, top: 0 } }, this.renderBlockSvg(block, M)));
+    // glyph render / placeholder — both hidden while editing, when the single
+    // textarea (below) becomes the box you type into.
+    if (!editing) {
+      if (empty) {
+        children.push(React.createElement('div', {
+          key: 'ph', style: { padding: '14px 20px', color: '#a8a395', fontSize: '15px', fontWeight: 500, fontStyle: 'italic', whiteSpace: 'nowrap' }
+        }, '输入中文…'));
+      } else {
+        children.push(React.createElement('div', { key: 'svg', style: { position: 'absolute', left: 0, top: 0 } }, this.renderBlockSvg(block, M)));
+      }
     }
 
     const blockDiv = React.createElement('div', {
@@ -1211,26 +1214,30 @@ export default class App extends React.Component {
       }
     }, children);
 
-    // editing textarea (sibling overlay, not clipped)
+    // editing textarea — the SINGLE box you type into, placed where the block sits
+    // (the glyph render is hidden while editing), with placeholder text.
     let editor = null;
     if (editing) {
-      const taW = Math.max(280, bbox.w);
+      const taW = Math.max(260, bbox.w);
+      const lines = (block.text || '').split('\n').length;
+      const taH = Math.max(58, lines * 28 + 24);
       editor = React.createElement('textarea', {
         key: 'ta-' + block.id, autoFocus: true,
         value: block.text,
+        placeholder: '输入中文…',
         onChange: (e) => this.editText(block.id, e.target.value),
         onMouseDown: (e) => e.stopPropagation(),
         onBlur: () => this.finishEdit(block.id),
         spellCheck: false,
         style: {
           position: 'absolute',
-          left: (left + bbox.w / 2 - taW / 2) + 'px',
-          top: (top + bbox.h + 12) + 'px',
-          minWidth: '280px', width: taW + 'px', height: '52px',
-          padding: '10px 13px', fontSize: '17px', fontWeight: 500, lineHeight: 1.3,
-          color: '#17150f', background: 'rgba(255,255,255,0.97)', resize: 'none',
-          border: '1.5px solid #2f6bff', borderRadius: '10px', outline: 'none',
-          boxShadow: '0 10px 30px rgba(47,107,255,0.18)', zIndex: 30,
+          left: left + 'px',
+          top: top + 'px',
+          minWidth: '260px', width: taW + 'px', height: taH + 'px',
+          padding: '12px 14px', fontSize: '17px', fontWeight: 500, lineHeight: 1.4,
+          color: TOK.ink, background: TOK.panel, resize: 'none',
+          border: `1.5px solid ${TOK.accent}`, borderRadius: `${R.lg}px`, outline: 'none',
+          boxShadow: '0 10px 30px rgba(37,99,235,0.16)', zIndex: 30,
           pointerEvents: 'auto', userSelect: 'text', WebkitUserSelect: 'text',
           fontFamily: this.fontStack(block.font || this.state.defFont, this.state.script)
         }
