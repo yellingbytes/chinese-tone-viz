@@ -12,7 +12,7 @@ import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import {
   ArrowCounterClockwise, ArrowClockwise, ShareFat, DotsThree,
   TextT, Microphone, SlidersHorizontal, Palette, TextAa,
-  X, Check, Pause, Waveform, Info, Trash,
+  X, Check, Pause, Waveform, Info, Trash, PenNib,
 } from '@phosphor-icons/react';
 import { ToneWaveIcon, HanziSegmentIcon, ToneSegmentsIcon, ToneFrameIcon, EdgeJointsIcon } from './ToneIcons';
 
@@ -243,10 +243,10 @@ export default class App extends React.Component {
   // (layout units). CJK breaks between any two characters; punctuation rules keep
   // closing marks from starting a line (they hang past the edge) and opening marks
   // from ending one (they're carried to the next line). wrapWidth=Infinity => no wrap.
-  wrapInfos(text, infos, M, wrapWidth) {
+  wrapInfos(text, infos, M, wrapWidth, base = 0) {
     const { ADV, HANZI_GAP, PUNCT_GAP } = M;
     const entries = [];
-    for (let i = 0; i < text.length; i++) entries.push({ ch: text[i], info: infos[i], i });
+    for (let i = 0; i < text.length; i++) entries.push({ ch: text[i], info: infos[i], i, gi: base + i });
     if (!wrapWidth || wrapWidth === Infinity || wrapWidth <= 0) return [entries];
 
     const advOf = (info) => info.kind === 'punct' ? ADV * 0.55 : ADV;
@@ -299,14 +299,14 @@ export default class App extends React.Component {
       if (info.tone === 3 && info.kind === 'hanzi') {
         const angle = FOLD_ANGLE;
         const dip = (adv / 2) * Math.tan(angle * Math.PI / 180);
-        specs.push({ key: key++, kind: 'fold', ch, sx: x, sy: y, adv, dip, angle });
+        specs.push({ key: key++, gi: ent.gi, tone: info.tone, kind: 'fold', ch, sx: x, sy: y, adv, dip, angle });
         x += adv;
       } else {
         let dy = 0;
         if (info.tone === 2) dy = -SLOPE * adv;
         else if (info.tone === 4) dy = SLOPE * adv;
         const angle = Math.atan2(dy, adv) * 180 / Math.PI;
-        specs.push({ key: key++, kind: 'normal', ch, sx: x, sy: y, adv, dy, angle, neutral: info.kind === 'neutral', punct: info.kind === 'punct' });
+        specs.push({ key: key++, gi: ent.gi, tone: info.tone, kind: 'normal', ch, sx: x, sy: y, adv, dy, angle, neutral: info.kind === 'neutral', punct: info.kind === 'punct' });
         x += adv; y += dy;
       }
     }
@@ -318,7 +318,7 @@ export default class App extends React.Component {
   // undefined/Infinity for auto width). Because the tone wave drifts vertically as
   // it flows, each visual line is measured and STACKED below the previous one with
   // a constant gap — so wrapped or pasted text never overlaps, whatever the tones.
-  layoutBlock(text, M, wrapWidth) {
+  layoutBlock(text, M, wrapWidth, overrides) {
     const FS = M.FS;
     const LINE_SPACING = (M.LINE_SPACING != null) ? M.LINE_SPACING : FS * 0.55;
     // Three modes: explicit width (user dragged the handle -> fixed-width box),
@@ -332,13 +332,22 @@ export default class App extends React.Component {
     const doWrap = effW != null;
     const paras = (text || '').split('\n');
     const all = [];
-    let runningTop = 0, lineCounter = 0;
+    let runningTop = 0, lineCounter = 0, globalBase = 0;
 
     for (const para of paras) {
       const tones = this.lineTones(para);                       // context-aware over the whole paragraph
       const infos = [];
-      for (let i = 0; i < para.length; i++) infos.push(this.detectTone(para[i], tones ? tones[i] : null));
-      const subLines = this.wrapInfos(para, infos, M, doWrap ? effW : Infinity);
+      for (let i = 0; i < para.length; i++) {
+        let info = this.detectTone(para[i], tones ? tones[i] : null);
+        // manual tone override (Wave Edit): re-map a hanzi's tone class
+        const ov = overrides ? overrides[globalBase + i] : undefined;
+        if (ov != null && info.kind === 'hanzi') {
+          info = (ov === 0) ? { tone: 1, kind: 'neutral' } : { tone: ov, kind: 'hanzi' };
+        }
+        infos.push(info);
+      }
+      const subLines = this.wrapInfos(para, infos, M, doWrap ? effW : Infinity, globalBase);
+      globalBase += para.length + 1;                            // +1 for the '\n' separator
 
       for (const entries of subLines) {
         const { specs } = this.layoutSub(entries, 0, M);
@@ -468,7 +477,7 @@ export default class App extends React.Component {
       fontFamily: this.fontStack(block.font || this.state.defFont, this.state.script)
     };
     const faceFill = block.color || '#161410';
-    const lay = this.layoutBlock(this.glyphsText(block.text), MB, block.width);
+    const lay = this.layoutBlock(this.glyphsText(block.text), MB, block.width, block.toneOverrides);
     const { bbox, specs } = lay;
 
     // Tone visualization mode (set via the Tone sheet)
@@ -549,7 +558,9 @@ export default class App extends React.Component {
     motionSpeed: 1,          // 0.5 | 1 | 2
     motionLoop: false,
     showEdgeJoints: false,   // draw the seam dot where glyph cells meet
-    toast: ''                // transient status message
+    toast: '',               // transient status message
+    waveEditId: null,        // block id currently in Wave Edit mode
+    waveLive: null           // { gi, control:{x,y}, end:{x,y}, tone } during a handle drag
   };
   _nextId = 2;
   _act = null;   // active pointer action
@@ -626,7 +637,7 @@ export default class App extends React.Component {
     this.setState({ blocks: s.blocks, selectedIds: s.selectedIds, editingId: null });
   }
   blockWorldRect(b, M) {
-    const { bbox } = this.layoutBlock(this.glyphsText(b.text), this.scaleMetrics(M, b.scale || 1), b.width);
+    const { bbox } = this.layoutBlock(this.glyphsText(b.text), this.scaleMetrics(M, b.scale || 1), b.width, b.toneOverrides);
     const w = (!b.text ? 240 : bbox.w), h = (!b.text ? 50 : bbox.h);
     return { x: b.x + bbox.x, y: b.y + bbox.y, w, h };
   }
@@ -648,7 +659,7 @@ export default class App extends React.Component {
     if (e.button !== 0) return;
     // left-drag on empty space -> marquee box-select; a plain click adds text
     this._act = { type: 'maybe-marquee', sx: e.clientX, sy: e.clientY, add: e.shiftKey, base: e.shiftKey ? this.state.selectedIds.slice() : [], moved: false, hadSel: this.state.selectedIds.length > 0 };
-    if (!e.shiftKey && this.state.selectedIds.length) this.setState({ selectedIds: [] });
+    if (!e.shiftKey && this.state.selectedIds.length) this.setState({ selectedIds: [], waveEditId: null });
   }
   onBlockDown(e, id) {
     if (e.button === 1 || (e.button === 0 && this._space)) return; // let bg pan
@@ -658,7 +669,7 @@ export default class App extends React.Component {
     let sel = this.state.selectedIds.slice();
     if (e.shiftKey) sel = sel.includes(id) ? sel.filter(x => x !== id) : [...sel, id];
     else if (!sel.includes(id)) sel = [id];
-    this.setState({ selectedIds: sel });
+    this.setState(s => ({ selectedIds: sel, waveEditId: (s.waveEditId != null && s.waveEditId !== id) ? null : s.waveEditId }));
     const origins = {};
     this.state.blocks.forEach(b => { if (sel.includes(b.id)) origins[b.id] = { x: b.x, y: b.y }; });
     this._act = { type: 'maybe-drag', origins, sx: e.clientX, sy: e.clientY, moved: false, preSnap: this.snap() };
@@ -714,6 +725,53 @@ export default class App extends React.Component {
       this.applyScale(id, s, r.x + r.w / 2, r.y + r.h / 2);
     });
   }
+
+  /* ---- Wave Edit: drag tone-segment handles to reshape a character's tone ---- */
+  toneName(t) { return t === 0 ? '轻声' : String(t); }
+  // classify a dragged segment (3 points, layout units, y is DOWN) into a tone class
+  classifyTone(p0, p1, p2, adv, M) {
+    const rise = p0.y - p2.y;                 // >0 => end higher (rising)
+    const chordY = (p0.y + p2.y) / 2;
+    const valley = p1.y - chordY;             // >0 => control dips below chord
+    const len = Math.hypot(p2.x - p0.x, p2.y - p0.y);
+    const RISE = M.SLOPE * adv * 0.4;
+    const VALLEY = M.FS * 0.18;
+    const NEUTRAL_LEN = adv * 0.6, NEUTRAL_AMP = M.FS * 0.06;
+    if (valley > VALLEY && Math.abs(rise) < RISE * 2) return 3;
+    if (len < NEUTRAL_LEN && Math.abs(rise) < NEUTRAL_AMP) return 0;
+    if (rise > RISE) return 2;
+    if (rise < -RISE) return 4;
+    return 1;
+  }
+  toggleWaveEdit() {
+    const id = this.state.selectedIds.length === 1 ? this.state.selectedIds[0] : null;
+    if (id == null) return;
+    this.setState(s => ({ waveEditId: s.waveEditId === id ? null : id, editingId: null, activeSheet: null }));
+  }
+  setToneOverride(blockId, gi, tone) {
+    this.pushHistory();
+    this.setState(s => ({
+      blocks: s.blocks.map(b => {
+        if (b.id !== blockId) return b;
+        const ov = { ...(b.toneOverrides || {}) }; ov[gi] = tone;
+        return { ...b, toneOverrides: ov };
+      })
+    }));
+  }
+  // begin dragging a control/end handle of one character
+  onWaveDown(e, blockId, spec, which) {
+    if (e.type === 'mousedown' && e.button !== 0) return;
+    e.stopPropagation(); if (e.preventDefault) e.preventDefault();
+    const t = e.touches ? e.touches[0] : e;
+    const p0 = { x: spec.sx, y: spec.sy };
+    const end = { x: spec.sx + spec.adv, y: spec.kind === 'fold' ? spec.sy : spec.sy + (spec.dy || 0) };
+    const control = spec.kind === 'fold'
+      ? { x: spec.sx + spec.adv / 2, y: spec.sy + spec.dip }
+      : { x: (p0.x + end.x) / 2, y: (p0.y + end.y) / 2 };
+    const startPt = which === 'end' ? end : control;
+    this._act = { type: 'wave', blockId, gi: spec.gi, which, p0, adv: spec.adv, endFixed: end, controlFixed: control, startPt, sx: t.clientX, sy: t.clientY, fromTone: spec.tone, lastTone: spec.tone, moved: false, preSnap: this.snap() };
+    this.setState({ waveLive: { gi: spec.gi, p0, control, end, tone: spec.tone } });
+  }
   onMove(e) {
     const a = this._act; if (!a) return;
     const dx = e.clientX - a.sx, dy = e.clientY - a.sy;
@@ -740,6 +798,15 @@ export default class App extends React.Component {
       const w = this.toWorld(e.clientX, e.clientY);
       const dist = Math.hypot(w.x - a.cx, w.y - a.cy);
       this.applyScale(a.id, a.startScale * (dist / a.startDist), a.cx, a.cy);
+    } else if (a.type === 'wave') {
+      const z = this.state.zoom;
+      const pt = { x: a.startPt.x + dx / z, y: a.startPt.y + dy / z };
+      const end = a.which === 'end' ? pt : a.endFixed;
+      const control = a.which === 'control' ? pt : { x: (a.p0.x + end.x) / 2, y: (a.p0.y + end.y) / 2 };
+      const M = this.scaleMetrics(this.metrics(), (this.state.blocks.find(b => b.id === a.blockId) || {}).scale || 1);
+      const tone = this.classifyTone(a.p0, control, end, a.adv, M);
+      if (tone !== a.lastTone) { a.lastTone = tone; if (navigator.vibrate) navigator.vibrate(6); }  // haptic on class change
+      this.setState({ waveLive: { gi: a.gi, p0: a.p0, control, end, tone } });
     } else {
       a.type = 'drag';
       const z = this.state.zoom, wdx = dx / z, wdy = dy / z;
@@ -753,6 +820,23 @@ export default class App extends React.Component {
       // Text blocks are created via the Text tool / empty-state buttons, not by tapping.
     } else if (a.type === 'marquee') {
       this.setState({ marquee: null });
+    } else if (a.type === 'wave') {
+      const live = this.state.waveLive;
+      this.setState({ waveLive: null });
+      if (a.moved && live) {
+        const tone = live.tone;
+        if (tone !== a.fromTone) {
+          this._undo.push(a.preSnap); if (this._undo.length > 120) this._undo.shift(); this._redo = [];
+          this.setState(s => ({
+            blocks: s.blocks.map(b => {
+              if (b.id !== a.blockId) return b;
+              const ov = { ...(b.toneOverrides || {}) }; ov[a.gi] = tone;
+              return { ...b, toneOverrides: ov };
+            })
+          }));
+          this.flash(`声调 ${this.toneName(a.fromTone)} → ${this.toneName(tone)}`);
+        }
+      }
     } else if ((a.type === 'drag' || a.type === 'resize' || a.type === 'scale') && a.moved) {
       this._undo.push(a.preSnap); if (this._undo.length > 120) this._undo.shift(); this._redo = [];
     }
@@ -1124,7 +1208,7 @@ export default class App extends React.Component {
    *  render
    * =================================================================== */
   renderBlockNode(block, M) {
-    const lay = this.layoutBlock(this.glyphsText(block.text), this.scaleMetrics(M, block.scale || 1), block.width);
+    const lay = this.layoutBlock(this.glyphsText(block.text), this.scaleMetrics(M, block.scale || 1), block.width, block.toneOverrides);
     const { bbox } = lay;
     // positioned in WORLD space — the world container applies pan + zoom.
     const selected = this.state.selectedIds.includes(block.id);
@@ -1203,6 +1287,10 @@ export default class App extends React.Component {
     } else {
       children.push(React.createElement('div', { key: 'svg', style: { position: 'absolute', left: 0, top: 0 } }, this.renderBlockSvg(block, M)));
     }
+    // Wave Edit: draggable tone-segment handles overlaid on the block
+    if (this.state.waveEditId === block.id && !editing && !empty) {
+      children.push(this.renderWaveHandles(block, lay.specs, bbox));
+    }
 
     const blockDiv = React.createElement('div', {
       key: 'blk-' + block.id,
@@ -1245,6 +1333,34 @@ export default class App extends React.Component {
       });
     }
     return React.createElement(React.Fragment, { key: 'f-' + block.id }, blockDiv, editor);
+  }
+
+  // SVG overlay of draggable control/end handles for Wave Edit, aligned to the block
+  renderWaveHandles(block, specs, bbox) {
+    const h = React.createElement;
+    const z = this.state.zoom || 1;
+    const r = 7 / z, sw = 2 / z;
+    const live = this.state.waveLive;
+    const els = [];
+    specs.forEach(s => {
+      if (s.punct) return;
+      const p0 = { x: s.sx, y: s.sy };
+      const end = { x: s.sx + s.adv, y: s.kind === 'fold' ? s.sy : s.sy + (s.dy || 0) };
+      const control = s.kind === 'fold' ? { x: s.sx + s.adv / 2, y: s.sy + s.dip } : { x: (p0.x + end.x) / 2, y: (p0.y + end.y) / 2 };
+      const hit = 20 / z;
+      const dl = (which) => ({ style: { pointerEvents: 'auto', cursor: 'grab', touchAction: 'none' }, onMouseDown: (e) => this.onWaveDown(e, block.id, s, which), onTouchStart: (e) => this.onWaveDown(e, block.id, s, which) });
+      // control: transparent hit halo + hollow dot
+      els.push(h('circle', { key: 'ch' + s.gi, cx: control.x, cy: control.y, r: hit, fill: 'transparent', ...dl('control') }));
+      els.push(h('circle', { key: 'c' + s.gi, cx: control.x, cy: control.y, r: r * 0.72, fill: '#fff', stroke: TOK.accent, strokeWidth: sw, style: { pointerEvents: 'none' } }));
+      // end: transparent hit halo + filled dot
+      els.push(h('circle', { key: 'eh' + s.gi, cx: end.x, cy: end.y, r: hit, fill: 'transparent', ...dl('end') }));
+      els.push(h('circle', { key: 'e' + s.gi, cx: end.x, cy: end.y, r, fill: TOK.accent, stroke: '#fff', strokeWidth: sw, style: { pointerEvents: 'none' } }));
+    });
+    if (live) {
+      els.push(h('polyline', { key: 'lv', points: `${live.p0.x},${live.p0.y} ${live.control.x},${live.control.y} ${live.end.x},${live.end.y}`, fill: 'none', stroke: TOK.accent, strokeWidth: 3 / z, strokeDasharray: `${7 / z} ${5 / z}`, strokeLinecap: 'round', strokeLinejoin: 'round' }));
+      els.push(h('text', { key: 'lb', x: live.end.x + 10 / z, y: live.end.y - 10 / z, fill: TOK.accent, fontSize: 15 / z, fontWeight: 700, fontFamily: 'system-ui, sans-serif', style: { userSelect: 'none' } }, '→ ' + this.toneName(live.tone)));
+    }
+    return h('svg', { key: 'wave', width: bbox.w, height: bbox.h, viewBox: `${bbox.x} ${bbox.y} ${bbox.w} ${bbox.h}`, style: { position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none', zIndex: 22 } }, els);
   }
 
   miniBtn() {
@@ -1494,10 +1610,11 @@ export default class App extends React.Component {
     const dock = h('div', {
       style: { position: 'absolute', left: 0, right: 0, bottom: 'calc(env(safe-area-inset-bottom) + 10px)', display: 'flex', justifyContent: 'center', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
     },
-      h('div', { style: { pointerEvents: 'auto', width: 'calc(100% - 24px)', maxWidth: 420, display: 'flex', padding: 6, background: TOK.surface, backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: `1px solid ${TOK.sep}`, borderRadius: 18, boxShadow: '0 1px 2px rgba(28,25,23,0.04),0 10px 30px rgba(28,25,23,0.08)' } },
+      h('div', { style: { pointerEvents: 'auto', width: 'calc(100% - 24px)', maxWidth: 480, display: 'flex', padding: 6, background: TOK.surface, backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: `1px solid ${TOK.sep}`, borderRadius: 18, boxShadow: '0 1px 2px rgba(28,25,23,0.04),0 10px 30px rgba(28,25,23,0.08)' } },
         dockItem(TextT, 'Text', () => this.addTextBlock()),
         dockItem(Microphone, 'Dictate', () => this.dictateTap(), { active: st.recording || st.activeSheet === 'dictation' }),
         dockItem(ToneWaveIcon, 'Tone', () => this.openSheet('tone'), { disabled: !hasSel, active: st.activeSheet === 'tone' }),
+        dockItem(PenNib, 'Wave', () => this.toggleWaveEdit(), { disabled: st.selectedIds.length !== 1, active: st.waveEditId != null }),
         dockItem(SlidersHorizontal, 'Style', () => this.openSheet('style'), { disabled: !hasSel, active: st.activeSheet === 'style' })
       )
     );
