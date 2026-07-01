@@ -12,7 +12,7 @@ import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import {
   ArrowCounterClockwise, ArrowClockwise, ShareFat, DotsThree,
   TextT, Microphone, SlidersHorizontal, Palette, TextAa,
-  X, Check, Pause, Waveform, Info, Trash, PenNib, Sparkle, Key, Scribble,
+  X, Check, Pause, Waveform, Info, Trash, PenNib, Sparkle, Key, Scribble, PencilSimple,
 } from '@phosphor-icons/react';
 import { ToneWaveIcon, HanziSegmentIcon, ToneSegmentsIcon, ToneFrameIcon, EdgeJointsIcon } from './ToneIcons';
 
@@ -83,19 +83,34 @@ export default class App extends React.Component {
   // Sample-text pool: short Mandarin tone / language fun-facts. "Sample Text" in
   // the Add dropdown drops a random one (different from the last) onto the canvas.
   static FUN_FACTS = [
-    '普通话有四个声调，还有轻声。',
-    '同样的拼音，声调不同，意思完全不同。',
-    '妈麻马骂，全靠声调分辨。',
-    '第三声像山谷，先下降再上升。',
-    '声调是汉语的旋律。',
-    '两个三声相连，前一个会变成二声。',
-    '一和不，在不同声调前会变调。',
-    '常用汉字大约三千个。',
-    '声调让中文听起来像唱歌。',
-    '每个汉字都有自己的声调形状。',
-    '第二声从低到高，像在问问题。',
-    '第四声短促有力，像下命令。'
+    '声调在夜里偷偷发光。',
+    '妈麻马骂，四个声音变魔术。',
+    '第三声像小山谷，藏着回声。',
+    '声调是汉字脚下的滑板。',
+    '一条波浪，拎着句子去散步。',
+    '两个三声相遇，前一个悄悄爬高。',
+    '一和不，最会临场换装。',
+    '中文听起来像会拐弯的歌。',
+    '每个汉字都有自己的小坡道。',
+    '第二声往上飞，像问号起跳。',
+    '第四声落下来，像鼓点敲桌。',
+    '轻声像一颗棉花糖，轻轻收尾。'
   ];
+
+  static REWRITE_MOODS = [
+    'playful and a little surprising, like a tiny visual joke',
+    'bright and curious, with an everyday object taking an unexpected turn',
+    'poetic but simple, like a sentence found in a dream notebook',
+    'warm, clever, and fun without becoming random or childish'
+  ];
+
+  static TONE_CHAR_FALLBACKS = {
+    1: '春天花风星灯山书心新光飞歌猫桌杯粥',
+    2: '人明白学文鱼云茶林河田情奇羊糖桥',
+    3: '小好想雨纸水草米里海老美走鸟晚',
+    4: '爱梦月夜看画笑去大亮路事字饭电',
+    0: '的了吗呢吧'
+  };
 
   // lineTones — context-aware tone numbers for a whole line via pinyin-pro.
   // Returns an array aligned 1:1 with the line's characters, or null when the
@@ -571,8 +586,8 @@ export default class App extends React.Component {
     waveLive: null,          // { gi, control:{x,y}, end:{x,y}, tone } during a handle drag
     rewrite: null,           // { blockId, loading, error, candidates } — AI tone rewrite (sheet)
     waveXform: null,         // { blockId, phase:'pending'|'soften'|'sharpen'|'done', gi, candidates, idx } — auto morph
-    drawMode: false,         // freehand "draw a tone line" mode (within Wave Edit)
-    drawPath: null           // [{x,y}] in block-local coords while drawing
+    drawMode: false,         // freehand tone-line-to-phrase mode
+    drawPath: null           // [{x,y}] in world coords while drawing
   };
   _nextId = 2;
   _act = null;   // active pointer action
@@ -636,6 +651,8 @@ export default class App extends React.Component {
   }
   snap() { return JSON.stringify({ blocks: this.state.blocks, selectedIds: this.state.selectedIds }); }
   pushHistory() { this._undo.push(this.snap()); if (this._undo.length > 120) this._undo.shift(); this._redo = []; }
+  pushSnapshot(snap) { if (!snap) return; this._undo.push(snap); if (this._undo.length > 120) this._undo.shift(); this._redo = []; }
+  restoreSnapshot(snap) { if (!snap) return; const s = JSON.parse(snap); this.setState({ blocks: s.blocks, selectedIds: s.selectedIds, editingId: null }); }
   undo() {
     if (!this._undo.length) return;
     this._redo.push(this.snap());
@@ -671,7 +688,7 @@ export default class App extends React.Component {
     if (e.button !== 0) return;
     // left-drag on empty space -> marquee box-select; a plain click adds text
     this._act = { type: 'maybe-marquee', sx: e.clientX, sy: e.clientY, add: e.shiftKey, base: e.shiftKey ? this.state.selectedIds.slice() : [], moved: false, hadSel: this.state.selectedIds.length > 0 };
-    if (!e.shiftKey && this.state.selectedIds.length) this.setState({ selectedIds: [], waveEditId: null });
+    if (!e.shiftKey && this.state.selectedIds.length) this.setState({ selectedIds: [], waveEditId: null, drawMode: false, drawPath: null });
   }
   onBlockDown(e, id) {
     if (e.button === 1 || (e.button === 0 && this._space)) return; // let bg pan
@@ -758,7 +775,10 @@ export default class App extends React.Component {
   toggleWaveEdit() {
     const id = this.state.selectedIds.length === 1 ? this.state.selectedIds[0] : null;
     if (id == null) return;
-    this.setState(s => ({ waveEditId: s.waveEditId === id ? null : id, editingId: null, activeSheet: null }));
+    this.setState(s => ({ waveEditId: s.waveEditId === id ? null : id, drawMode: false, editingId: null, activeSheet: null }));
+  }
+  togglePencil() {
+    this.setState(s => ({ drawMode: !s.drawMode, drawPath: null, waveEditId: null, editingId: null, activeSheet: null }));
   }
   setToneOverride(blockId, gi, tone) {
     this.pushHistory();
@@ -773,6 +793,7 @@ export default class App extends React.Component {
 
   /* ---- Phase 2: AI rewrite by tone (OpenAI, direct from browser) ---- */
   getAiKey() { try { return localStorage.getItem('tc_ai_key') || ''; } catch (e) { return ''; } }
+  hasAiAccess() { return true; } // relay-first; browser key remains an optional fallback
   setAiKeyPrompt() {
     const cur = this.getAiKey();
     const v = window.prompt('Paste your OpenAI API key (stored only in this browser):', cur ? '' : '');
@@ -780,10 +801,13 @@ export default class App extends React.Component {
     try { if (v.trim()) localStorage.setItem('tc_ai_key', v.trim()); else localStorage.removeItem('tc_ai_key'); } catch (e) {}
     this.flash(v.trim() ? 'AI key saved (this browser)' : 'AI key cleared');
   }
-  // per-hanzi original + target tone arrays for a block (target = with overrides applied)
-  blockHanziTones(block) {
+  // per-hanzi original + target tone arrays for a block (target = with overrides applied).
+  // focusGi limits the generated text change to one visual character while leaving
+  // any older shape-only overrides alone.
+  blockHanziTones(block, focusGi) {
     const ov = block.toneOverrides || {};
     const orig = [], target = [], changed = [];
+    const entries = [];
     let gi = 0;
     for (const para of (block.text || '').split('\n')) {
       const tp = this.lineTones(para);
@@ -791,18 +815,43 @@ export default class App extends React.Component {
         const info = this.detectTone(para[i], tp ? tp[i] : null);
         if (info.kind === 'hanzi' || info.kind === 'neutral') {
           const o = info.kind === 'neutral' ? 0 : info.tone;
-          const t = (ov[gi] != null) ? ov[gi] : o;
+          const useOverride = ov[gi] != null && (focusGi == null || gi === focusGi);
+          const t = useOverride ? ov[gi] : o;
           if (t !== o) changed.push(target.length);
+          entries.push({ gi, hi: target.length, ch: para[i], origTone: o, targetTone: t });
           orig.push(o); target.push(t);
         }
         gi++;
       }
       gi++;   // '\n'
     }
-    return { orig, target, changed };
+    const changedCharGis = changed.map(hi => {
+      const ent = entries.find(e => e.hi === hi);
+      return ent ? ent.gi : null;
+    }).filter(x => x != null);
+    return { orig, target, changed, entries, changedCharGis };
   }
-  // re-derive a candidate's per-hanzi tones and compare to the target pattern
-  verifyCandidate(text, target) {
+  auditCandidate(original, candidate, allowedGis) {
+    const allowed = new Set(allowedGis || []);
+    let lockedDiffs = 0, changedDiffs = 0;
+    const lengthMatch = candidate.length === original.length;
+    const n = Math.min(candidate.length, original.length);
+    for (let i = 0; i < n; i++) {
+      if (candidate[i] === original[i]) continue;
+      if (allowed.has(i)) changedDiffs++;
+      else lockedDiffs++;
+    }
+    lockedDiffs += Math.abs(candidate.length - original.length);
+    const expectedChanges = allowed.size;
+    return {
+      lengthMatch,
+      lockedDiffs,
+      changedDiffs,
+      lockedMatch: lengthMatch && lockedDiffs === 0 && (expectedChanges === 0 || changedDiffs > 0)
+    };
+  }
+  isPlainHanziText(text) { return /^[\u3400-\u9fff]+$/.test(text || ''); }
+  candidateToneArray(text) {
     const got = [];
     for (const para of (text || '').split('\n')) {
       const tp = this.lineTones(para);
@@ -811,50 +860,205 @@ export default class App extends React.Component {
         if (info.kind === 'hanzi' || info.kind === 'neutral') got.push(info.kind === 'neutral' ? 0 : info.tone);
       }
     }
+    return got;
+  }
+  async postChatCompletion(body) {
+    const relay = await fetch('/api/rewrite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).catch(() => null);
+    if (relay && relay.ok) return relay.json();
+    if (relay && relay.status !== 404) {
+      let msg = 'OpenAI relay error ' + relay.status;
+      try {
+        const j = await relay.json();
+        if (j && j.error) msg = j.error;
+      } catch (e) {}
+      throw new Error(msg);
+    }
+
+    const key = this.getAiKey();
+    if (!key) throw new Error('no-key');
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) throw new Error(res.status === 401 ? 'Invalid API key' : ('OpenAI error ' + res.status));
+    return res.json();
+  }
+  // re-derive a candidate's per-hanzi tones and compare to the target pattern
+  verifyCandidate(text, target) {
+    const got = this.candidateToneArray(text);
     const n = Math.min(got.length, target.length);
     let off = Math.abs(got.length - target.length);
     for (let i = 0; i < n; i++) if (got[i] !== target[i]) off++;
     return { toneOff: off, toneMatch: off === 0 };
   }
+  fallbackSingleCharCandidates(block, focusGi) {
+    const meta = this.blockHanziTones(block, focusGi);
+    const ent = meta.entries.find(e => e.gi === focusGi);
+    if (!ent) return [];
+    const pool = App.TONE_CHAR_FALLBACKS[ent.targetTone] || App.TONE_CHAR_FALLBACKS[1] || '';
+    const out = [];
+    for (const ch of pool) {
+      if (ch === block.text[focusGi]) continue;
+      const candidate = block.text.slice(0, focusGi) + ch + block.text.slice(focusGi + 1);
+      const tone = this.verifyCandidate(candidate, meta.target);
+      const audit = this.auditCandidate(block.text || '', candidate, [focusGi]);
+      if (tone.toneMatch && audit.lockedMatch) out.push({ candidate, tonePattern: meta.target, changedIndices: [ent.hi], note: 'local exact-tone fallback', ...tone, ...audit });
+      if (out.length >= 3) break;
+    }
+    return out;
+  }
   // call OpenAI and return verified candidates for a block's current tone target.
   // Meaning is NOT required to be preserved — just natural, grammatical Mandarin.
-  async fetchCandidates(block, avoid) {
-    const key = this.getAiKey();
-    if (!key) throw new Error('no-key');
-    const { orig, target, changed } = this.blockHanziTones(block);
+  async fetchCandidates(block, avoid, opts = {}) {
+    const meta = this.blockHanziTones(block, opts.focusGi);
+    const { orig, target, changed, changedCharGis } = meta;
+    if (!changed.length) throw new Error('No tone changes to rewrite');
     const script = this.state.script === 'traditional' ? 'Traditional (繁體)' : 'Simplified (简体)';
+    const mood = App.REWRITE_MOODS[Math.floor(Math.random() * App.REWRITE_MOODS.length)];
+    const scope = opts.focusGi != null
+      ? `This is a SINGLE-CHARACTER edit. Exactly one original character may change: source character index ${opts.focusGi}, which is hanzi position ${changed[0]}.`
+      : 'This may be a drawn tone-line edit. Change only the hanzi positions listed below; keep everything else locked.';
     const prompt =
 `Original sentence: 「${block.text}」
 Script: ${script}
 Per-hanzi surface tones as spoken (after sandhi): [${orig.join(', ')}]
 Target tone pattern (0 = neutral 轻声): [${target.join(', ')}]
 Changed hanzi positions (0-based): [${changed.join(', ')}]
+Changed source character indices (0-based): [${changedCharGis.join(', ')}]
 ${avoid && avoid.length ? 'Do NOT repeat any of these: ' + avoid.map(a => '「' + a + '」').join(', ') + '\n' : ''}
-Write up to 3 natural, grammatical, idiomatic Mandarin sentences whose hanzi — read aloud with tone sandhi — match the TARGET tone pattern as closely as possible. The MEANING MAY CHANGE — it does not need to relate to the original; prioritise sounding natural and matching the tones. Keep the ${script} script and use the same number of hanzi when possible. Never output nonsense to force the tones.
+${scope}
+
+Produce up to 5 candidates. CRITICAL: keep EVERY character identical to the original EXCEPT at the changed source character indices listed above. At each changed index, substitute exactly one natural Chinese character whose surface tone matches the target tone at that hanzi position. Do not alter, add, remove, or reorder any other character or punctuation. Same character count, same ${script} script.
+
+The content should feel ${mood}. Meaning may drift, and a delightful surprise is welcome, but grammar and the locked-character rule matter more. Never output nonsense to force the tones.
 
 Respond with ONLY a JSON object:
 {"candidates":[{"candidate":"中文句子","tonePattern":[1,2,3,4,0],"changedIndices":[2,4],"note":"short reason"}]}`;
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
-      body: JSON.stringify({
-        model: 'gpt-4o', temperature: 0.9, response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: 'You are an expert Mandarin writer and phonologist. Output only valid JSON.' },
-          { role: 'user', content: prompt }
-        ]
-      })
+    const data = await this.postChatCompletion({
+      model: 'gpt-4o', temperature: 0.9, response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: 'You are an expert Mandarin writer and phonologist. Output only valid JSON.' },
+        { role: 'user', content: prompt }
+      ]
     });
-    if (!res.ok) throw new Error(res.status === 401 ? 'Invalid API key' : ('OpenAI error ' + res.status));
-    const data = await res.json();
     const parsed = JSON.parse(data.choices[0].message.content);
     let cands = Array.isArray(parsed) ? parsed : (parsed.candidates || []);
-    return cands.slice(0, 3).map(c => ({ ...c, ...this.verifyCandidate(c.candidate, target) }));
+    const checked = cands.map(c => {
+      const candidate = String(c.candidate || '').trim();
+      return { ...c, candidate, ...this.verifyCandidate(candidate, target), ...this.auditCandidate(block.text || '', candidate, changedCharGis) };
+    }).filter(c => c.candidate && c.toneMatch && c.lockedMatch);
+    return checked.slice(0, 3);
+  }
+  tonePatternFromPath(path) {
+    const M = this.metrics();
+    if (!path || path.length < 2) return null;
+    const xs = path.map(p => p.x);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const range = maxX - minX;
+    if (range < M.FS * 1.4) return null;
+    const sorted = path.slice().sort((a, b) => a.x - b.x);
+    const yAt = (px) => {
+      if (px <= sorted[0].x) return sorted[0].y;
+      if (px >= sorted[sorted.length - 1].x) return sorted[sorted.length - 1].y;
+      for (let i = 1; i < sorted.length; i++) {
+        if (sorted[i].x >= px) {
+          const t = (px - sorted[i - 1].x) / ((sorted[i].x - sorted[i - 1].x) || 1);
+          return sorted[i - 1].y + t * (sorted[i].y - sorted[i - 1].y);
+        }
+      }
+      return sorted[sorted.length - 1].y;
+    };
+    const n = Math.max(2, Math.min(14, Math.round(range / (M.ADV * 0.92))));
+    const tones = [];
+    for (let i = 0; i < n; i++) {
+      const x0 = minX + (i / n) * range;
+      const xm = minX + ((i + 0.5) / n) * range;
+      const x2 = minX + ((i + 1) / n) * range;
+      tones.push(this.classifyTone(
+        { x: 0, y: yAt(x0) },
+        { x: M.ADV / 2, y: yAt(xm) },
+        { x: M.ADV, y: yAt(x2) },
+        M.ADV,
+        M
+      ));
+    }
+    return tones;
+  }
+  async fetchPhraseForTonePattern(target, avoid) {
+    if (!target || !target.length) throw new Error('No tone line detected');
+    const mood = App.REWRITE_MOODS[Math.floor(Math.random() * App.REWRITE_MOODS.length)];
+    const prompt =
+`A user drew a tone contour. Convert it into one natural Mandarin phrase or short sentence.
+Target surface tone pattern after tone sandhi (0 = neutral 轻声): [${target.join(', ')}]
+Length: exactly ${target.length} Hanzi.
+${avoid && avoid.length ? 'Do NOT repeat any of these: ' + avoid.map(a => '「' + a + '」').join(', ') + '\n' : ''}
+Produce up to 5 candidates. Each candidate must be exactly ${target.length} Chinese characters, with no punctuation, spaces, Latin letters, or digits. The spoken surface-tone pattern must match the target exactly.
+Make the content ${mood}. It may be a phrase, image, or tiny surprising sentence, but it must sound like real Mandarin.
+
+Respond with ONLY a JSON object:
+{"candidates":[{"candidate":"中文短句","tonePattern":[1,2,3],"note":"short reason"}]}`;
+    const data = await this.postChatCompletion({
+      model: 'gpt-4o', temperature: 0.95, response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: 'You are an expert Mandarin writer and phonologist. Output only valid JSON.' },
+        { role: 'user', content: prompt }
+      ]
+    });
+    const parsed = JSON.parse(data.choices[0].message.content);
+    const cands = Array.isArray(parsed) ? parsed : (parsed.candidates || []);
+    return cands.map(c => {
+      const candidate = String(c.candidate || '').replace(/\s+/g, '');
+      return { ...c, candidate, ...this.verifyCandidate(candidate, target) };
+    }).filter(c => c.candidate && this.isPlainHanziText(c.candidate) && c.candidate.length === target.length && c.toneMatch).slice(0, 3);
+  }
+  fallbackPhraseForTonePattern(target) {
+    if (!target || !target.length) return '';
+    return target.map(t => {
+      const pool = App.TONE_CHAR_FALLBACKS[t] || App.TONE_CHAR_FALLBACKS[1];
+      return pool[(Math.random() * pool.length) | 0] || '花';
+    }).join('');
+  }
+  async generatePhraseFromDraw(target, path, preSnap) {
+    this.flash('正在按线条生成短句 · shaping phrase');
+    let cands = null;
+    try { cands = await this.fetchPhraseForTonePattern(target); } catch (e) { cands = null; }
+    let text = cands && cands[0] && cands[0].candidate;
+    if (!text) {
+      const fallback = this.fallbackPhraseForTonePattern(target);
+      const check = this.verifyCandidate(fallback, target);
+      if (this.isPlainHanziText(fallback) && fallback.length === target.length && check.toneMatch) text = fallback;
+    }
+    if (!text) { this.flash('No matching phrase found'); return; }
+
+    const xs = path.map(p => p.x), ys = path.map(p => p.y);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const source = this.state.blocks.find(b => this.state.selectedIds.includes(b.id));
+    const block = {
+      id: this._nextId++,
+      x: 0,
+      y: 0,
+      text,
+      color: source ? (source.color || this.state.defColor) : this.state.defColor,
+      weight: source ? (source.weight != null ? source.weight : this.state.defWeight) : this.state.defWeight,
+      font: source ? (source.font || this.state.defFont) : this.state.defFont
+    };
+    const MB = this.scaleMetrics(this.metrics(), block.scale || 1);
+    const { bbox } = this.layoutBlock(this.glyphsText(text), MB, undefined, undefined);
+    block.x = cx - (bbox.x + bbox.w / 2);
+    block.y = cy - (bbox.y + bbox.h / 2);
+    this.pushSnapshot(preSnap);
+    this.setState(s => ({ blocks: [...s.blocks, block], selectedIds: [block.id] }));
+    this.flash('已生成匹配线条的短句 · phrase matched');
   }
   async rewriteByTone(blockId) {
     const block = this.state.blocks.find(b => b.id === blockId);
     if (!block) return;
-    if (!this.getAiKey()) { this.setState({ activeSheet: 'rewrite', rewrite: { blockId, loading: false, error: 'no-key', candidates: null } }); return; }
     this.setState({ activeSheet: 'rewrite', rewrite: { blockId, loading: true, error: null, candidates: null } });
     try {
       const cands = await this.fetchCandidates(block);
@@ -876,19 +1080,45 @@ Respond with ONLY a JSON object:
    *  0–200ms  snap (done before this) + haptic
    *  200ms–≥1s pending: shimmer / breathing + "Finding matching text…"
    *  then     soften old glyphs -> swap text -> sharpen new glyphs        */
-  async startWaveTransform(blockId, gi, preSnap) {
-    const block = this.state.blocks.find(b => b.id === blockId);
+  async startWaveTransform(blockId, gi, preSnap, sourceBlock) {
+    const block = sourceBlock || this.state.blocks.find(b => b.id === blockId);
     if (!block) return;
-    this.setState({ waveXform: { blockId, gi, phase: 'pending' } });
+    this.setState({ waveXform: { blockId, gi, phase: 'pending', sourceBlock: { ...block } } });
     const t0 = Date.now();
     let cands = null, err = null;
-    try { cands = await this.fetchCandidates(block); } catch (e) { err = (e && e.message) || 'failed'; }
+    try { cands = await this.fetchCandidates(block, null, { focusGi: gi }); } catch (e) { err = (e && e.message) || 'failed'; }
     // honour a minimum 1s "breath" even if the model is faster
     await new Promise(r => setTimeout(r, Math.max(0, 1000 - (Date.now() - t0))));
     const xf = this.state.waveXform;
     if (!xf || xf.blockId !== blockId) return;                 // cancelled
-    if (err === 'no-key') { this.setState({ waveXform: null }); this.flash('Set AI Key (⋯ More) to generate text'); return; }
-    if (!cands || !cands.length || !cands[0].candidate) { this.setState({ waveXform: null }); this.flash(err ? ('生成失败 · ' + err) : 'No matching text found'); return; }
+    if (err) {
+      if (gi != null) {
+        const fallback = this.fallbackSingleCharCandidates(block, gi);
+        if (fallback.length) {
+          this._xformPreSnap = preSnap;
+          this.commitTransform(blockId, fallback, 0);
+          return;
+        }
+      }
+      this.setState({ waveXform: null });
+      this.restoreSnapshot(preSnap);
+      this.flash(err === 'no-key' ? 'Add OPENAI_API_KEY to the dev server or set a browser key' : ('生成失败 · ' + err));
+      return;
+    }
+    if (!cands || !cands.length || !cands[0].candidate) {
+      if (gi != null) {
+        const fallback = this.fallbackSingleCharCandidates(block, gi);
+        if (fallback.length) {
+          this._xformPreSnap = preSnap;
+          this.commitTransform(blockId, fallback, 0);
+          return;
+        }
+      }
+      this.setState({ waveXform: null });
+      this.restoreSnapshot(preSnap);
+      this.flash('No matching text found');
+      return;
+    }
     this._xformPreSnap = preSnap;
     this.commitTransform(blockId, cands, 0);
   }
@@ -901,7 +1131,20 @@ Respond with ONLY a JSON object:
     this._xfT1 = setTimeout(() => {
       if (this._xformPreSnap) { this._undo.push(this._xformPreSnap); if (this._undo.length > 120) this._undo.shift(); this._redo = []; this._xformPreSnap = null; }
       this.setState(s => ({
-        blocks: s.blocks.map(b => { if (b.id !== blockId) return b; const nb = { ...b, text: chosen }; delete nb.toneOverrides; return nb; }),
+        blocks: s.blocks.map(b => {
+          if (b.id !== blockId) return b;
+          const nb = { ...b, text: chosen };
+          const gi = s.waveXform && s.waveXform.gi;
+          if (gi != null) {
+            const ov = { ...(nb.toneOverrides || {}) };
+            delete ov[gi];
+            if (Object.keys(ov).length) nb.toneOverrides = ov;
+            else delete nb.toneOverrides;
+          } else {
+            delete nb.toneOverrides;
+          }
+          return nb;
+        }),
         waveXform: (s.waveXform && s.waveXform.blockId === blockId) ? { ...s.waveXform, phase: 'sharpen' } : s.waveXform
       }));
       this._xfT2 = setTimeout(() => this.setState(s => (s.waveXform && s.waveXform.blockId === blockId) ? { waveXform: { ...s.waveXform, phase: 'done' } } : {}), 420);
@@ -912,10 +1155,10 @@ Respond with ONLY a JSON object:
     const xf = this.state.waveXform; if (!xf) return;
     const blockId = xf.blockId, cands = xf.candidates || [];
     if (xf.idx + 1 < cands.length) { this.commitTransform(blockId, cands, xf.idx + 1); return; }
-    const block = this.state.blocks.find(b => b.id === blockId); if (!block) return;
+    const block = xf.sourceBlock || this.state.blocks.find(b => b.id === blockId); if (!block) return;
     this.setState(s => ({ waveXform: { ...s.waveXform, phase: 'pending' } }));
     const avoid = cands.map(c => c.candidate);
-    try { const more = await this.fetchCandidates(block, avoid); if (more && more.length) { this.commitTransform(blockId, more, 0); return; } } catch (e) {}
+    try { const more = await this.fetchCandidates(block, avoid, { focusGi: xf.gi }); if (more && more.length) { this.commitTransform(blockId, more, 0); return; } } catch (e) {}
     this.setState(s => (s.waveXform ? { waveXform: { ...s.waveXform, phase: 'done' } } : {}));
   }
   endTransform() { clearTimeout(this._xfT1); clearTimeout(this._xfT2); this.setState({ waveXform: null }); }
@@ -931,47 +1174,18 @@ Respond with ONLY a JSON object:
       ? { x: spec.sx + spec.adv / 2, y: spec.sy + spec.dip }
       : { x: (p0.x + end.x) / 2, y: (p0.y + end.y) / 2 };
     const startPt = which === 'end' ? end : control;
-    this._act = { type: 'wave', blockId, gi: spec.gi, which, p0, adv: spec.adv, endFixed: end, controlFixed: control, startPt, sx: t.clientX, sy: t.clientY, fromTone: spec.tone, lastTone: spec.tone, moved: false, preSnap: this.snap() };
-    this.setState({ waveLive: { gi: spec.gi, p0, control, end, tone: spec.tone } });
+    const live = { gi: spec.gi, p0, control, end, tone: spec.tone };
+    this._act = { type: 'wave', blockId, gi: spec.gi, which, p0, adv: spec.adv, endFixed: end, controlFixed: control, startPt, sx: t.clientX, sy: t.clientY, fromTone: spec.tone, lastTone: spec.tone, live, moved: false, preSnap: this.snap() };
+    this.setState({ waveLive: live });
   }
-  // begin a freehand tone-line draw over a block (points in block-local coords)
-  onDrawDown(e, blockId) {
+  // begin a freehand tone-line draw on the canvas (points in world coords)
+  onDrawDown(e) {
     if (e.type === 'mousedown' && e.button !== 0) return;
     e.stopPropagation(); if (e.preventDefault) e.preventDefault();
-    const block = this.state.blocks.find(b => b.id === blockId); if (!block) return;
     const t = e.touches ? e.touches[0] : e;
-    const w = this.toWorld(t.clientX, t.clientY);
-    const p = { x: w.x - block.x, y: w.y - block.y };
-    this._act = { type: 'draw', blockId, pts: [p], sx: t.clientX, sy: t.clientY, moved: false, preSnap: this.snap() };
+    const p = this.toWorld(t.clientX, t.clientY);
+    this._act = { type: 'draw', pts: [p], sx: t.clientX, sy: t.clientY, moved: false, preSnap: this.snap() };
     this.setState({ drawPath: [p] });
-  }
-  // map a drawn line onto every hanzi: stretch its x-range across the characters,
-  // then classify each character's slice into a tone (relative shape, so the
-  // absolute height of the line doesn't matter — only its ups/downs/valleys).
-  mapDrawToTones(blockId, path) {
-    const block = this.state.blocks.find(b => b.id === blockId); if (!block) return null;
-    const M = this.scaleMetrics(this.metrics(), block.scale || 1);
-    const specs = this.layoutBlock(this.glyphsText(block.text), M, block.width, block.toneOverrides).specs.filter(s => !s.punct);
-    if (!specs.length || path.length < 2) return null;
-    const minX = Math.min(...path.map(p => p.x)), maxX = Math.max(...path.map(p => p.x));
-    const b0 = specs[0].sx, b1 = specs[specs.length - 1].sx + specs[specs.length - 1].adv;
-    const sorted = path.slice().sort((a, b) => a.x - b.x);
-    const yAt = (px) => {
-      if (px <= sorted[0].x) return sorted[0].y;
-      if (px >= sorted[sorted.length - 1].x) return sorted[sorted.length - 1].y;
-      for (let i = 1; i < sorted.length; i++) if (sorted[i].x >= px) { const t = (px - sorted[i - 1].x) / ((sorted[i].x - sorted[i - 1].x) || 1); return sorted[i - 1].y + t * (sorted[i].y - sorted[i - 1].y); }
-      return sorted[sorted.length - 1].y;
-    };
-    // map a block-x onto the drawn line's x-range (stretch the drawing across the text)
-    const toPathX = (bx) => { const f = (b1 - b0) ? (bx - b0) / (b1 - b0) : 0; return minX + Math.max(0, Math.min(1, f)) * (maxX - minX); };
-    const ov = {};
-    specs.forEach(s => {
-      const p0 = { x: 0, y: yAt(toPathX(s.sx)) };
-      const pm = { x: s.adv / 2, y: yAt(toPathX(s.sx + s.adv / 2)) };
-      const p2 = { x: s.adv, y: yAt(toPathX(s.sx + s.adv)) };
-      ov[s.gi] = this.classifyTone(p0, pm, p2, s.adv, M);
-    });
-    return ov;
   }
   onMove(e) {
     const a = this._act; if (!a) return;
@@ -1007,11 +1221,10 @@ Respond with ONLY a JSON object:
       const M = this.scaleMetrics(this.metrics(), (this.state.blocks.find(b => b.id === a.blockId) || {}).scale || 1);
       const tone = this.classifyTone(a.p0, control, end, a.adv, M);
       if (tone !== a.lastTone) { a.lastTone = tone; if (navigator.vibrate) navigator.vibrate(6); }  // haptic on class change
-      this.setState({ waveLive: { gi: a.gi, p0: a.p0, control, end, tone } });
+      a.live = { gi: a.gi, p0: a.p0, control, end, tone };
+      this.setState({ waveLive: a.live });
     } else if (a.type === 'draw') {
-      const block = this.state.blocks.find(b => b.id === a.blockId);
-      const w = this.toWorld(e.clientX, e.clientY);
-      a.pts.push({ x: w.x - block.x, y: w.y - block.y });
+      a.pts.push(this.toWorld(e.clientX, e.clientY));
       this.setState({ drawPath: a.pts.slice() });
     } else {
       a.type = 'drag';
@@ -1027,37 +1240,45 @@ Respond with ONLY a JSON object:
     } else if (a.type === 'marquee') {
       this.setState({ marquee: null });
     } else if (a.type === 'wave') {
-      const live = this.state.waveLive;
+      const live = a.live || this.state.waveLive;
       this.setState({ waveLive: null });
       if (a.moved && live && live.tone !== a.fromTone) {
         // apply the snapped tone so the wave reflects the drag
+        let updatedBlock = null;
         this.setState(s => ({
           blocks: s.blocks.map(b => {
             if (b.id !== a.blockId) return b;
             const ov = { ...(b.toneOverrides || {}) }; ov[a.gi] = live.tone;
-            return { ...b, toneOverrides: ov };
+            updatedBlock = { ...b, toneOverrides: ov };
+            return updatedBlock;
           })
-        }));
-        if (this.getAiKey()) {
-          // auto: breathe, find matching text, exhale it (history handled inside)
-          this.startWaveTransform(a.blockId, a.gi, a.preSnap);
-        } else {
-          // shape-only: record history now; the chip lets them add a key to generate
-          this._undo.push(a.preSnap); if (this._undo.length > 120) this._undo.shift(); this._redo = [];
-          this.flash(`声调 ${this.toneName(a.fromTone)} → ${this.toneName(live.tone)}`);
-        }
+        }), () => {
+          if (this.hasAiAccess()) {
+            // auto: breathe, find matching text, exhale it (history handled inside)
+            this.startWaveTransform(a.blockId, a.gi, a.preSnap, updatedBlock);
+          } else {
+            // shape-only: record history now; the chip lets them add a key to generate
+            this.pushSnapshot(a.preSnap);
+            this.flash(`声调 ${this.toneName(a.fromTone)} → ${this.toneName(live.tone)}`);
+          }
+        });
       }
     } else if (a.type === 'draw') {
       const path = a.pts;
-      this.setState({ drawPath: null, drawMode: false });
+      this.setState({ drawPath: null });
       if (a.moved && path && path.length > 2) {
-        const ov = this.mapDrawToTones(a.blockId, path);
-        if (ov && Object.keys(ov).length) {
-          this.setState(s => ({ blocks: s.blocks.map(b => b.id === a.blockId ? { ...b, toneOverrides: { ...(b.toneOverrides || {}), ...ov } } : b) }));
-          if (navigator.vibrate) navigator.vibrate(8);
-          if (this.getAiKey()) this.startWaveTransform(a.blockId, null, a.preSnap);
-          else { this._undo.push(a.preSnap); if (this._undo.length > 120) this._undo.shift(); this._redo = []; this.flash('声调已按线条更新 · shaped to your line'); }
+        const M = this.metrics();
+        const xs = path.map(p => p.x), range = Math.max(...xs) - Math.min(...xs);
+        const progress = path[path.length - 1].x - path[0].x;   // net left->right travel
+        // reject circles / scribbles / right-to-left — guide the user to draw L→R
+        if (range < M.FS * 2 || progress < range * 0.5) {
+          this.flash('从左到右画一条线  →  ·  draw left to right');
+          return;   // keep drawMode on so they can try again
         }
+        const target = this.tonePatternFromPath(path);
+        if (!target || !target.length) { this.flash('画长一点的声调线 · draw a longer tone line'); return; }
+        if (navigator.vibrate) navigator.vibrate(8);
+        this.generatePhraseFromDraw(target, path, a.preSnap);
       }
     } else if ((a.type === 'drag' || a.type === 'resize' || a.type === 'scale') && a.moved) {
       this._undo.push(a.preSnap); if (this._undo.length > 120) this._undo.shift(); this._redo = [];
@@ -1509,13 +1730,14 @@ Respond with ONLY a JSON object:
     } else {
       children.push(React.createElement('div', { key: 'svg', style: { position: 'absolute', left: 0, top: 0 } }, this.renderBlockSvg(block, M)));
     }
-    // Wave Edit: draw overlay, point handles, or the breath shimmer while morphing
+    const xf = this.state.waveXform, xfHere = xf && xf.blockId === block.id;
     if (this.state.waveEditId === block.id && !editing && !empty) {
-      const xf = this.state.waveXform, xfHere = xf && xf.blockId === block.id;
-      if (this.state.drawMode) children.push(this.renderDrawOverlay(block, bbox));
-      else if (xfHere && xf.phase === 'pending') children.push(this.renderXformShimmer(block, lay.specs, bbox));
+      // Wave Edit: point handles, or the breath shimmer while morphing
+      if (xfHere && xf.phase === 'pending') children.push(this.renderXformShimmer(block, lay.specs, bbox));
       else if (!xfHere || xf.phase === 'done') children.push(this.renderWaveHandles(block, lay.specs, bbox));
-      // soften / sharpen: show nothing — let the glyphs morph cleanly
+    } else if (xfHere && xf.phase === 'pending' && !editing && !empty) {
+      // transform can run from a Pencil draw even without Wave handles
+      children.push(this.renderXformShimmer(block, lay.specs, bbox));
     }
 
     const blockDiv = React.createElement('div', {
@@ -1614,18 +1836,36 @@ Respond with ONLY a JSON object:
     );
   }
 
-  // freehand draw capture + live gradient stroke (draw a tone line over the block)
-  renderDrawOverlay(block, bbox) {
-    const h = React.createElement;
-    const pad = 70;
+  // Canvas-wide draw capture: each left-to-right stroke becomes a new phrase
+  // whose actual character tones match the drawn contour.
+  renderCanvasDrawOverlay(h) {
+    if (!this.state.drawMode) return null;
     const dp = this.state.drawPath;
-    const gid = 'tcdraw-' + block.id;
-    return h('div', { key: 'draw', style: { position: 'absolute', inset: `-${pad}px`, zIndex: 25 } },
-      h('div', { key: 'cap', onMouseDown: (e) => this.onDrawDown(e, block.id), onTouchStart: (e) => this.onDrawDown(e, block.id), style: { position: 'absolute', inset: 0, cursor: 'crosshair', touchAction: 'none', pointerEvents: 'auto' } }),
-      (dp && dp.length > 1) ? h('svg', { key: 'path', width: bbox.w, height: bbox.h, viewBox: `${bbox.x} ${bbox.y} ${bbox.w} ${bbox.h}`, style: { position: 'absolute', left: pad, top: pad, overflow: 'visible', pointerEvents: 'none' } },
+    const { panX, panY, zoom } = this.state;
+    const gid = 'tcdraw-canvas';
+    const toScreen = (p) => ({
+      x: p.x * zoom + panX,
+      y: p.y * zoom + panY
+    });
+    return h('div', {
+      key: 'canvas-draw',
+      onMouseDown: (e) => this.onDrawDown(e),
+      onTouchStart: (e) => this.onDrawDown(e),
+      style: { position: 'fixed', inset: 0, zIndex: 45, pointerEvents: 'auto', cursor: 'crosshair', touchAction: 'none' }
+    },
+      (dp && dp.length > 1) ? h('svg', {
+        key: 'path',
+        width: '100%', height: '100%', viewBox: `0 0 ${window.innerWidth || 1} ${window.innerHeight || 1}`,
+        style: { position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none' }
+      },
         h('defs', { key: 'd' }, h('linearGradient', { id: gid, x1: '0%', y1: '0%', x2: '100%', y2: '0%' },
           h('stop', { offset: '0%', stopColor: '#2563eb' }), h('stop', { offset: '50%', stopColor: '#7c3aed' }), h('stop', { offset: '100%', stopColor: '#ef4444' }))),
-        h('polyline', { key: 'p', points: dp.map(p => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' '), fill: 'none', stroke: `url(#${gid})`, strokeWidth: this.metrics().FS * (block.scale || 1) * 0.055, strokeLinecap: 'round', strokeLinejoin: 'round', strokeOpacity: 0.95 })
+        h('polyline', {
+          key: 'p',
+          points: dp.map(p => { const s = toScreen(p); return s.x.toFixed(1) + ',' + s.y.toFixed(1); }).join(' '),
+          fill: 'none', stroke: `url(#${gid})`, strokeWidth: Math.max(3, this.metrics().FS * 0.055 * zoom),
+          strokeLinecap: 'round', strokeLinejoin: 'round', strokeOpacity: 0.95
+        })
       ) : null
     );
   }
@@ -1877,11 +2117,12 @@ Respond with ONLY a JSON object:
     const dock = h('div', {
       style: { position: 'absolute', left: 0, right: 0, bottom: 'calc(env(safe-area-inset-bottom) + 10px)', display: 'flex', justifyContent: 'center', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
     },
-      h('div', { style: { pointerEvents: 'auto', width: 'calc(100% - 24px)', maxWidth: 480, display: 'flex', padding: 6, background: TOK.surface, backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: `1px solid ${TOK.sep}`, borderRadius: 18, boxShadow: '0 1px 2px rgba(28,25,23,0.04),0 10px 30px rgba(28,25,23,0.08)' } },
+      h('div', { style: { pointerEvents: 'auto', width: 'calc(100% - 24px)', maxWidth: 540, display: 'flex', padding: 6, background: TOK.surface, backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: `1px solid ${TOK.sep}`, borderRadius: 18, boxShadow: '0 1px 2px rgba(28,25,23,0.04),0 10px 30px rgba(28,25,23,0.08)' } },
         dockItem(TextT, 'Text', () => this.addTextBlock()),
         dockItem(Microphone, 'Dictate', () => this.dictateTap(), { active: st.recording || st.activeSheet === 'dictation' }),
         dockItem(ToneWaveIcon, 'Tone', () => this.openSheet('tone'), { disabled: !hasSel, active: st.activeSheet === 'tone' }),
         dockItem(PenNib, 'Wave', () => this.toggleWaveEdit(), { disabled: st.selectedIds.length !== 1, active: st.waveEditId != null }),
+        dockItem(PencilSimple, 'Draw', () => this.togglePencil(), { active: st.drawMode }),
         dockItem(SlidersHorizontal, 'Style', () => this.openSheet('style'), { disabled: !hasSel, active: st.activeSheet === 'style' })
       )
     );
@@ -1912,6 +2153,7 @@ Respond with ONLY a JSON object:
     );
 
     const activeSheet = this.renderActiveSheet(v, h, sheet);
+    const canvasDrawOverlay = this.renderCanvasDrawOverlay(h);
 
     // -- Wave transform UI: pending label, done controls, or (no key) the chip --
     const xf = st.waveXform;
@@ -1929,20 +2171,18 @@ Respond with ONLY a JSON object:
         btn('⟳ 换一个 Another', () => this.anotherCandidate()),
         btn('↺ Undo', () => { this.endTransform(); this.undo(); }));
     }
-    // Draw-a-line chip / hint (Wave Edit)
+    // Pencil (Draw) hint — draw a tone line, left → right
     const topBar2 = { position: 'absolute', top: 'calc(env(safe-area-inset-top) + 62px)', left: '50%', transform: 'translateX(-50%)', zIndex: 55 };
-    const drawChip = (st.waveEditId != null && !st.drawMode && !xf && !st.activeSheet) ? h('div', { key: 'drawchip', style: topBar2 },
-      h('button', { onClick: () => this.setState({ drawMode: true }), style: { display: 'flex', alignItems: 'center', gap: 7, padding: '9px 15px', borderRadius: 999, border: `1px solid ${TOK.sep}`, background: '#fff', color: TOK.ink, fontWeight: 600, fontSize: 13.5, boxShadow: '0 6px 20px rgba(28,25,23,0.12)', cursor: 'pointer' } },
-        h(Scribble, { size: 17 }), '手绘声调线 Draw a line')) : null;
+    const drawChip = null;
     const drawHint = st.drawMode ? h('div', { key: 'drawhint', style: { ...topBar2, display: 'flex', gap: 8, alignItems: 'center' } },
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 7, padding: '9px 15px', borderRadius: 999, background: '#fff', border: `1px solid ${TOK.sep}`, boxShadow: '0 6px 20px rgba(28,25,23,0.12)', fontSize: 13.5, fontWeight: 600, color: TOK.ink } },
-        h(Scribble, { size: 16, color: TOK.accent }), '画一条线 · draw a tone line'),
+        h(Scribble, { size: 16, color: TOK.accent }), '从左到右画线生成短句 · draw a tone phrase, left → right'),
       h('button', { onClick: () => this.setState({ drawMode: false, drawPath: null }), 'aria-label': 'Cancel', style: { width: 34, height: 34, borderRadius: '50%', border: `1px solid ${TOK.sep}`, background: '#fff', cursor: 'pointer', color: TOK.inkSoft, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, h(X, { size: 16 }))) : null;
 
     // manual chip only when there's an override, no key set, and no transform running
     const waveBlk = st.waveEditId != null ? st.blocks.find(b => b.id === st.waveEditId) : null;
     const hasOverrides = waveBlk && waveBlk.toneOverrides && Object.keys(waveBlk.toneOverrides).length > 0;
-    const rewriteChip = (!xf && hasOverrides && !st.activeSheet && !this.getAiKey()) ? h('div', { key: 'rwchip', style: barBase },
+    const rewriteChip = (!xf && hasOverrides && !st.activeSheet && !this.hasAiAccess()) ? h('div', { key: 'rwchip', style: barBase },
       h('button', { onClick: () => this.rewriteByTone(st.waveEditId), style: { display: 'flex', alignItems: 'center', gap: 7, padding: '11px 18px', borderRadius: 999, border: 'none', background: TOK.ink, color: '#fff', fontWeight: 600, fontSize: 14, boxShadow: '0 8px 24px rgba(28,25,23,0.28)', cursor: 'pointer' } },
         h(Sparkle, { size: 17, weight: 'fill' }), '按声调改写文字')
     ) : null;
@@ -1952,7 +2192,7 @@ Respond with ONLY a JSON object:
 
     return h('div', {
       style: { position: 'fixed', inset: 0, overflow: 'hidden', background: TOK.canvas, fontFamily: "system-ui,-apple-system,'Segoe UI',sans-serif", color: TOK.ink, WebkitFontSmoothing: 'antialiased' }
-    }, v.canvasContent, empty, topBar, dock, activeSheet, rewriteChip, waveTransformUi, drawChip, drawHint, toast);
+    }, v.canvasContent, empty, canvasDrawOverlay, topBar, dock, activeSheet, rewriteChip, waveTransformUi, drawChip, drawHint, toast);
   }
 
   // ---- sheet bodies ----------------------------------------------------------
@@ -2094,8 +2334,8 @@ Respond with ONLY a JSON object:
     if (rw.error === 'no-key') {
       body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'center', padding: '8px 0' } },
         h(Key, { size: 34, color: TOK.inkSoft }),
-        h('div', { style: { fontSize: 14, color: TOK.inkSoft, textAlign: 'center', lineHeight: 1.5 } }, 'Add your OpenAI API key to generate text that matches the new tone pattern. It is stored only in this browser.'),
-        h('button', { onClick: () => { this.setAiKeyPrompt(); if (this.getAiKey()) this.rewriteByTone(rw.blockId); }, style: { height: 44, padding: '0 20px', borderRadius: R.md, border: 'none', background: TOK.ink, color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' } }, 'Set API key'),
+        h('div', { style: { fontSize: 14, color: TOK.inkSoft, textAlign: 'center', lineHeight: 1.5 } }, 'No server key was found. Add OPENAI_API_KEY on the server, or set a temporary browser key for this device.'),
+        h('button', { onClick: () => { this.setAiKeyPrompt(); if (this.getAiKey()) this.rewriteByTone(rw.blockId); }, style: { height: 44, padding: '0 20px', borderRadius: R.md, border: 'none', background: TOK.ink, color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' } }, 'Set browser key'),
         h('div', { style: { display: 'flex', width: '100%' } }, keepShape)
       );
     } else if (rw.loading) {
@@ -2145,7 +2385,7 @@ Respond with ONLY a JSON object:
       toggleRow(ToneFrameIcon, 'Tone Frames', st.showFrames, () => this.setState(s => ({ showFrames: !s.showFrames }))),
       toggleRow(EdgeJointsIcon, 'Edge Joints', st.showEdgeJoints, () => this.toggleEdgeJoints()),
       h('div', { style: { height: 1, background: TOK.sep, margin: '6px 0' } }),
-      actionRow(Key, this.getAiKey() ? 'AI Key · set (tap to change)' : 'AI Key · not set (for Rewrite)', () => this.setAiKeyPrompt()),
+      actionRow(Key, this.getAiKey() ? 'Browser AI Key · set' : 'AI Key · server default / optional browser fallback', () => this.setAiKeyPrompt()),
       actionRow(Trash, 'Reset Canvas', () => { if (typeof window !== 'undefined' && window.confirm('Clear the whole canvas?')) this.resetCanvas(); }, true),
       actionRow(Info, 'About', () => this.flash('Tone Canvas · Mandarin tone typography'))
     );
