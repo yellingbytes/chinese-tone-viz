@@ -505,13 +505,21 @@ export default class App extends React.Component {
       if (this.state.showEdgeJoints) joints.push(this.jointDot(s, faceFill, id + '-j', MB));
       if (this.state.showFrames) this.debugFrame(s, id, MB).forEach(f => frames.push(f));
     });
+    // auto-morph: soften the glyphs while searching, sharpen the new ones in
+    const xf = this.state.waveXform;
+    let facesStyle = { opacity: facesOpacity, transition: `opacity ${0.7 / (this.state.motionSpeed || 1)}s cubic-bezier(0.22,0.61,0.36,1)` };
+    if (xf && xf.blockId === block.id) {
+      const cx = bbox.x + bbox.w / 2, cy = bbox.y + bbox.h / 2;
+      if (xf.phase === 'soften') facesStyle = { opacity: 0.16, filter: 'blur(3.5px)', transform: `translate(${cx}px,${cy}px) scale(0.985) translate(${-cx}px,${-cy}px)`, transition: 'opacity 0.34s ease, filter 0.34s ease, transform 0.34s ease' };
+      else if (xf.phase === 'sharpen' || xf.phase === 'done') facesStyle = { opacity: 1, filter: 'blur(0px)', transform: 'translate(0,0) scale(1)', transition: 'opacity 0.42s ease, filter 0.42s ease, transform 0.42s ease' };
+    }
     return React.createElement('svg', {
       width: bbox.w, height: bbox.h, viewBox: `${bbox.x} ${bbox.y} ${bbox.w} ${bbox.h}`,
       style: { display: 'block', overflow: 'visible', pointerEvents: 'none' }
     },
       React.createElement('defs', { key: 'defs' }, defs),
       segs.length ? React.createElement('g', { key: 'sg' }, segs) : null,
-      React.createElement('g', { key: 'fc', style: { opacity: facesOpacity, transition: `opacity ${0.7 / (this.state.motionSpeed || 1)}s cubic-bezier(0.22,0.61,0.36,1)` } }, faces),
+      React.createElement('g', { key: 'fc', style: facesStyle }, faces),
       joints.length ? React.createElement('g', { key: 'jt' }, joints) : null,
       frames.length ? React.createElement('g', { key: 'fr' }, frames) : null
     );
@@ -561,7 +569,8 @@ export default class App extends React.Component {
     toast: '',               // transient status message
     waveEditId: null,        // block id currently in Wave Edit mode
     waveLive: null,          // { gi, control:{x,y}, end:{x,y}, tone } during a handle drag
-    rewrite: null            // { blockId, loading, error, candidates, target } — AI tone rewrite
+    rewrite: null,           // { blockId, loading, error, candidates } — AI tone rewrite (sheet)
+    waveXform: null          // { blockId, phase:'pending'|'soften'|'sharpen'|'done', gi, candidates, idx } — auto morph
   };
   _nextId = 2;
   _act = null;   // active pointer action
@@ -738,7 +747,7 @@ export default class App extends React.Component {
     const RISE = M.SLOPE * adv * 0.4;
     const VALLEY = M.FS * 0.18;
     const NEUTRAL_LEN = adv * 0.6, NEUTRAL_AMP = M.FS * 0.06;
-    if (valley > VALLEY && Math.abs(rise) < RISE * 2) return 3;
+    if (valley > VALLEY) return 3;   // control dragged down -> V (3rd tone), from any tone
     if (len < NEUTRAL_LEN && Math.abs(rise) < NEUTRAL_AMP) return 0;
     if (rise > RISE) return 2;
     if (rise < -RISE) return 4;
@@ -805,13 +814,12 @@ export default class App extends React.Component {
     for (let i = 0; i < n; i++) if (got[i] !== target[i]) off++;
     return { toneOff: off, toneMatch: off === 0 };
   }
-  async rewriteByTone(blockId) {
-    const block = this.state.blocks.find(b => b.id === blockId);
-    if (!block) return;
+  // call OpenAI and return verified candidates for a block's current tone target.
+  // Meaning is NOT required to be preserved — just natural, grammatical Mandarin.
+  async fetchCandidates(block, avoid) {
     const key = this.getAiKey();
-    if (!key) { this.setState({ activeSheet: 'rewrite', rewrite: { blockId, loading: false, error: 'no-key', candidates: null } }); return; }
+    if (!key) throw new Error('no-key');
     const { orig, target, changed } = this.blockHanziTones(block);
-    this.setState({ activeSheet: 'rewrite', rewrite: { blockId, loading: true, error: null, candidates: null, target } });
     const script = this.state.script === 'traditional' ? 'Traditional (繁體)' : 'Simplified (简体)';
     const prompt =
 `Original sentence: 「${block.text}」
@@ -819,28 +827,35 @@ Script: ${script}
 Per-hanzi surface tones as spoken (after sandhi): [${orig.join(', ')}]
 Target tone pattern (0 = neutral 轻声): [${target.join(', ')}]
 Changed hanzi positions (0-based): [${changed.join(', ')}]
+${avoid && avoid.length ? 'Do NOT repeat any of these: ' + avoid.map(a => '「' + a + '」').join(', ') + '\n' : ''}
+Write up to 3 natural, grammatical, idiomatic Mandarin sentences whose hanzi — read aloud with tone sandhi — match the TARGET tone pattern as closely as possible. The MEANING MAY CHANGE — it does not need to relate to the original; prioritise sounding natural and matching the tones. Keep the ${script} script and use the same number of hanzi when possible. Never output nonsense to force the tones.
 
-Rewrite into up to 3 natural, grammatical Mandarin sentences whose hanzi — read aloud with tone sandhi — match the TARGET tone pattern as closely as possible. Preserve the meaning, grammar, register, the ${script} script, and any punctuation; keep the same number of hanzi when possible. Never output nonsense to force the tones — prefer real, idiomatic Chinese. If an exact match is impossible, get as close as you can and note it.
-
-Respond with ONLY a JSON object of this shape:
-{"candidates":[{"candidate":"中文句子","tonePattern":[1,2,3,4,0],"changedIndices":[2,4],"meaningPreservation":"high|medium|low","note":"short reason"}]}`;
+Respond with ONLY a JSON object:
+{"candidates":[{"candidate":"中文句子","tonePattern":[1,2,3,4,0],"changedIndices":[2,4],"note":"short reason"}]}`;
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+      body: JSON.stringify({
+        model: 'gpt-4o', temperature: 0.9, response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: 'You are an expert Mandarin writer and phonologist. Output only valid JSON.' },
+          { role: 'user', content: prompt }
+        ]
+      })
+    });
+    if (!res.ok) throw new Error(res.status === 401 ? 'Invalid API key' : ('OpenAI error ' + res.status));
+    const data = await res.json();
+    const parsed = JSON.parse(data.choices[0].message.content);
+    let cands = Array.isArray(parsed) ? parsed : (parsed.candidates || []);
+    return cands.slice(0, 3).map(c => ({ ...c, ...this.verifyCandidate(c.candidate, target) }));
+  }
+  async rewriteByTone(blockId) {
+    const block = this.state.blocks.find(b => b.id === blockId);
+    if (!block) return;
+    if (!this.getAiKey()) { this.setState({ activeSheet: 'rewrite', rewrite: { blockId, loading: false, error: 'no-key', candidates: null } }); return; }
+    this.setState({ activeSheet: 'rewrite', rewrite: { blockId, loading: true, error: null, candidates: null } });
     try {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
-        body: JSON.stringify({
-          model: 'gpt-4o', temperature: 0.8, response_format: { type: 'json_object' },
-          messages: [
-            { role: 'system', content: 'You are an expert Mandarin writer and phonologist. Output only valid JSON.' },
-            { role: 'user', content: prompt }
-          ]
-        })
-      });
-      if (!res.ok) { const msg = res.status === 401 ? 'Invalid API key' : ('OpenAI error ' + res.status); throw new Error(msg); }
-      const data = await res.json();
-      const parsed = JSON.parse(data.choices[0].message.content);
-      let cands = Array.isArray(parsed) ? parsed : (parsed.candidates || []);
-      cands = cands.slice(0, 3).map(c => ({ ...c, ...this.verifyCandidate(c.candidate, target) }));
+      const cands = await this.fetchCandidates(block);
       this.setState(s => (s.rewrite && s.rewrite.blockId === blockId) ? { rewrite: { ...s.rewrite, loading: false, candidates: cands } } : {});
     } catch (e) {
       this.setState(s => (s.rewrite && s.rewrite.blockId === blockId) ? { rewrite: { ...s.rewrite, loading: false, error: (e && e.message) || 'Request failed' } } : {});
@@ -854,6 +869,54 @@ Respond with ONLY a JSON object of this shape:
     }));
     this.flash('已应用改写 · rewrite applied');
   }
+
+  /* ---- auto morph: the wave "inhales", finds text, then "exhales" it ----
+   *  0–200ms  snap (done before this) + haptic
+   *  200ms–≥1s pending: shimmer / breathing + "Finding matching text…"
+   *  then     soften old glyphs -> swap text -> sharpen new glyphs        */
+  async startWaveTransform(blockId, gi, preSnap) {
+    const block = this.state.blocks.find(b => b.id === blockId);
+    if (!block) return;
+    this.setState({ waveXform: { blockId, gi, phase: 'pending' } });
+    const t0 = Date.now();
+    let cands = null, err = null;
+    try { cands = await this.fetchCandidates(block); } catch (e) { err = (e && e.message) || 'failed'; }
+    // honour a minimum 1s "breath" even if the model is faster
+    await new Promise(r => setTimeout(r, Math.max(0, 1000 - (Date.now() - t0))));
+    const xf = this.state.waveXform;
+    if (!xf || xf.blockId !== blockId) return;                 // cancelled
+    if (err === 'no-key') { this.setState({ waveXform: null }); this.flash('Set AI Key (⋯ More) to generate text'); return; }
+    if (!cands || !cands.length || !cands[0].candidate) { this.setState({ waveXform: null }); this.flash(err ? ('生成失败 · ' + err) : 'No matching text found'); return; }
+    this._xformPreSnap = preSnap;
+    this.commitTransform(blockId, cands, 0);
+  }
+  // soften the current glyphs, swap in candidate[idx]'s text, then sharpen
+  commitTransform(blockId, cands, idx) {
+    const chosen = cands[idx] && cands[idx].candidate;
+    if (!chosen) { this.setState({ waveXform: null }); return; }
+    this.setState(s => ({ waveXform: { ...s.waveXform, phase: 'soften', candidates: cands, idx } }));
+    clearTimeout(this._xfT1); clearTimeout(this._xfT2);
+    this._xfT1 = setTimeout(() => {
+      if (this._xformPreSnap) { this._undo.push(this._xformPreSnap); if (this._undo.length > 120) this._undo.shift(); this._redo = []; this._xformPreSnap = null; }
+      this.setState(s => ({
+        blocks: s.blocks.map(b => { if (b.id !== blockId) return b; const nb = { ...b, text: chosen }; delete nb.toneOverrides; return nb; }),
+        waveXform: (s.waveXform && s.waveXform.blockId === blockId) ? { ...s.waveXform, phase: 'sharpen' } : s.waveXform
+      }));
+      this._xfT2 = setTimeout(() => this.setState(s => (s.waveXform && s.waveXform.blockId === blockId) ? { waveXform: { ...s.waveXform, phase: 'done' } } : {}), 420);
+    }, 340);
+  }
+  // "另一个" — morph to the next candidate, or fetch a fresh batch if exhausted
+  async anotherCandidate() {
+    const xf = this.state.waveXform; if (!xf) return;
+    const blockId = xf.blockId, cands = xf.candidates || [];
+    if (xf.idx + 1 < cands.length) { this.commitTransform(blockId, cands, xf.idx + 1); return; }
+    const block = this.state.blocks.find(b => b.id === blockId); if (!block) return;
+    this.setState(s => ({ waveXform: { ...s.waveXform, phase: 'pending' } }));
+    const avoid = cands.map(c => c.candidate);
+    try { const more = await this.fetchCandidates(block, avoid); if (more && more.length) { this.commitTransform(blockId, more, 0); return; } } catch (e) {}
+    this.setState(s => (s.waveXform ? { waveXform: { ...s.waveXform, phase: 'done' } } : {}));
+  }
+  endTransform() { clearTimeout(this._xfT1); clearTimeout(this._xfT2); this.setState({ waveXform: null }); }
 
   // begin dragging a control/end handle of one character
   onWaveDown(e, blockId, spec, which) {
@@ -920,18 +983,22 @@ Respond with ONLY a JSON object of this shape:
     } else if (a.type === 'wave') {
       const live = this.state.waveLive;
       this.setState({ waveLive: null });
-      if (a.moved && live) {
-        const tone = live.tone;
-        if (tone !== a.fromTone) {
+      if (a.moved && live && live.tone !== a.fromTone) {
+        // apply the snapped tone so the wave reflects the drag
+        this.setState(s => ({
+          blocks: s.blocks.map(b => {
+            if (b.id !== a.blockId) return b;
+            const ov = { ...(b.toneOverrides || {}) }; ov[a.gi] = live.tone;
+            return { ...b, toneOverrides: ov };
+          })
+        }));
+        if (this.getAiKey()) {
+          // auto: breathe, find matching text, exhale it (history handled inside)
+          this.startWaveTransform(a.blockId, a.gi, a.preSnap);
+        } else {
+          // shape-only: record history now; the chip lets them add a key to generate
           this._undo.push(a.preSnap); if (this._undo.length > 120) this._undo.shift(); this._redo = [];
-          this.setState(s => ({
-            blocks: s.blocks.map(b => {
-              if (b.id !== a.blockId) return b;
-              const ov = { ...(b.toneOverrides || {}) }; ov[a.gi] = tone;
-              return { ...b, toneOverrides: ov };
-            })
-          }));
-          this.flash(`声调 ${this.toneName(a.fromTone)} → ${this.toneName(tone)}`);
+          this.flash(`声调 ${this.toneName(a.fromTone)} → ${this.toneName(live.tone)}`);
         }
       }
     } else if ((a.type === 'drag' || a.type === 'resize' || a.type === 'scale') && a.moved) {
@@ -1384,9 +1451,12 @@ Respond with ONLY a JSON object of this shape:
     } else {
       children.push(React.createElement('div', { key: 'svg', style: { position: 'absolute', left: 0, top: 0 } }, this.renderBlockSvg(block, M)));
     }
-    // Wave Edit: draggable tone-segment handles overlaid on the block
+    // Wave Edit: handles, or (while auto-transforming) the gradient breath shimmer
     if (this.state.waveEditId === block.id && !editing && !empty) {
-      children.push(this.renderWaveHandles(block, lay.specs, bbox));
+      const xf = this.state.waveXform, xfHere = xf && xf.blockId === block.id;
+      if (xfHere && xf.phase === 'pending') children.push(this.renderXformShimmer(block, lay.specs, bbox));
+      else if (!xfHere || xf.phase === 'done') children.push(this.renderWaveHandles(block, lay.specs, bbox));
+      // soften / sharpen: show nothing — let the glyphs morph cleanly
     }
 
     const blockDiv = React.createElement('div', {
@@ -1458,6 +1528,31 @@ Respond with ONLY a JSON object of this shape:
       els.push(h('text', { key: 'lb', x: live.end.x + 10 / z, y: live.end.y - 10 / z, fill: TOK.accent, fontSize: 15 / z, fontWeight: 700, fontFamily: 'system-ui, sans-serif', style: { userSelect: 'none' } }, '→ ' + this.toneName(live.tone)));
     }
     return h('svg', { key: 'wave', width: bbox.w, height: bbox.h, viewBox: `${bbox.x} ${bbox.y} ${bbox.w} ${bbox.h}`, style: { position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none', zIndex: 22 } }, els);
+  }
+
+  // gradient "breath" shimmer that sweeps along the wave while searching for text
+  renderXformShimmer(block, specs, bbox) {
+    const h = React.createElement;
+    const fs = this.metrics().FS * (block.scale || 1);
+    const pts = [];
+    specs.forEach(s => {
+      if (s.punct) return;
+      pts.push([s.sx, s.sy]);
+      if (s.kind === 'fold') pts.push([s.sx + s.adv / 2, s.sy + s.dip]);
+      pts.push([s.sx + s.adv, s.kind === 'fold' ? s.sy : s.sy + (s.dy || 0)]);
+    });
+    const points = pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+    const gid = 'tcgrad-' + block.id;
+    return h('svg', { key: 'xf', width: bbox.w, height: bbox.h, viewBox: `${bbox.x} ${bbox.y} ${bbox.w} ${bbox.h}`, style: { position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none', zIndex: 23 } },
+      h('defs', { key: 'd' }, h('linearGradient', { id: gid, x1: '0%', y1: '0%', x2: '100%', y2: '0%' },
+        h('stop', { offset: '0%', stopColor: '#2563eb' }),
+        h('stop', { offset: '50%', stopColor: '#7c3aed' }),
+        h('stop', { offset: '100%', stopColor: '#ef4444' }))),
+      // wide soft glow, gently breathing
+      h('polyline', { key: 'glow', points, fill: 'none', stroke: `url(#${gid})`, strokeWidth: fs * 0.16, strokeLinecap: 'round', strokeLinejoin: 'round', style: { filter: 'blur(3px)', animation: 'tc-breathe 1.5s ease-in-out infinite' } }),
+      // a highlight that sweeps along the wave
+      h('polyline', { key: 'sweep', points, fill: 'none', stroke: `url(#${gid})`, strokeWidth: fs * 0.05, strokeLinecap: 'round', strokeLinejoin: 'round', strokeDasharray: `${fs * 0.9} ${fs * 20}`, style: { animation: 'tc-sweep 1.3s linear infinite' } })
+    );
   }
 
   miniBtn() {
@@ -1743,10 +1838,26 @@ Respond with ONLY a JSON object of this shape:
 
     const activeSheet = this.renderActiveSheet(v, h, sheet);
 
-    // -- "Rewrite by tone" chip (Wave Edit + at least one manual tone override) -
+    // -- Wave transform UI: pending label, done controls, or (no key) the chip --
+    const xf = st.waveXform;
+    const barBase = { position: 'absolute', left: '50%', bottom: 'calc(env(safe-area-inset-bottom) + 88px)', transform: 'translateX(-50%)', zIndex: 55 };
+    let waveTransformUi = null;
+    if (xf && xf.phase === 'pending') {
+      waveTransformUi = h('div', { key: 'xfp', style: barBase },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 9, padding: '10px 18px', borderRadius: 999, background: '#fff', border: `1px solid ${TOK.sep}`, boxShadow: '0 8px 24px rgba(28,25,23,0.16)' } },
+          h('span', { style: { width: 16, height: 16, borderRadius: '50%', background: 'linear-gradient(90deg,#2563eb,#7c3aed,#ef4444)', animation: 'tc-breathe 1.5s ease-in-out infinite' } }),
+          h('span', { style: { fontSize: 13.5, fontWeight: 600, color: TOK.ink } }, 'Finding matching text… · 正在寻找匹配文字')));
+    } else if (xf && xf.phase === 'done') {
+      const btn = (label, onClick, primary) => h('button', { key: label, onClick, style: { display: 'flex', alignItems: 'center', gap: 6, padding: '10px 16px', borderRadius: 999, border: primary ? 'none' : `1px solid ${TOK.sep}`, background: primary ? TOK.ink : '#fff', color: primary ? '#fff' : TOK.ink, fontWeight: 600, fontSize: 13.5, cursor: 'pointer' } }, label);
+      waveTransformUi = h('div', { key: 'xfd', style: { ...barBase, display: 'flex', gap: 8, background: 'transparent', filter: 'drop-shadow(0 8px 24px rgba(28,25,23,0.2))' } },
+        btn('✓ 保留 Keep', () => this.endTransform(), true),
+        btn('⟳ 换一个 Another', () => this.anotherCandidate()),
+        btn('↺ Undo', () => { this.endTransform(); this.undo(); }));
+    }
+    // manual chip only when there's an override, no key set, and no transform running
     const waveBlk = st.waveEditId != null ? st.blocks.find(b => b.id === st.waveEditId) : null;
     const hasOverrides = waveBlk && waveBlk.toneOverrides && Object.keys(waveBlk.toneOverrides).length > 0;
-    const rewriteChip = (hasOverrides && !st.activeSheet) ? h('div', { key: 'rwchip', style: { position: 'absolute', left: '50%', bottom: 'calc(env(safe-area-inset-bottom) + 88px)', transform: 'translateX(-50%)', zIndex: 55 } },
+    const rewriteChip = (!xf && hasOverrides && !st.activeSheet && !this.getAiKey()) ? h('div', { key: 'rwchip', style: barBase },
       h('button', { onClick: () => this.rewriteByTone(st.waveEditId), style: { display: 'flex', alignItems: 'center', gap: 7, padding: '11px 18px', borderRadius: 999, border: 'none', background: TOK.ink, color: '#fff', fontWeight: 600, fontSize: 14, boxShadow: '0 8px 24px rgba(28,25,23,0.28)', cursor: 'pointer' } },
         h(Sparkle, { size: 17, weight: 'fill' }), '按声调改写文字')
     ) : null;
@@ -1756,7 +1867,7 @@ Respond with ONLY a JSON object of this shape:
 
     return h('div', {
       style: { position: 'fixed', inset: 0, overflow: 'hidden', background: TOK.canvas, fontFamily: "system-ui,-apple-system,'Segoe UI',sans-serif", color: TOK.ink, WebkitFontSmoothing: 'antialiased' }
-    }, v.canvasContent, empty, topBar, dock, activeSheet, rewriteChip, toast);
+    }, v.canvasContent, empty, topBar, dock, activeSheet, rewriteChip, waveTransformUi, toast);
   }
 
   // ---- sheet bodies ----------------------------------------------------------

@@ -10,6 +10,11 @@ button { font-family: inherit; cursor: pointer; }
   100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
 }
 
+/* Wave transform: the tone wave "breathes" and a highlight sweeps along it
+   while searching for matching text (Bending Tones). */
+@keyframes tc-breathe { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.85; } }
+@keyframes tc-sweep   { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -220; } }
+
 /* On phones/tablets the toolbar can't fit one row — let it scroll horizontally,
    and hide the desktop-only keyboard hint bar. */
 @media (max-width: 820px) {
