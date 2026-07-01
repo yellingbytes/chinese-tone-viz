@@ -12,7 +12,7 @@ import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import {
   ArrowCounterClockwise, ArrowClockwise, ShareFat, DotsThree,
   TextT, Microphone, SlidersHorizontal, Palette, TextAa,
-  X, Check, Pause, Waveform, Info, Trash, PenNib, Sparkle, Key,
+  X, Check, Pause, Waveform, Info, Trash, PenNib, Sparkle, Key, Scribble,
 } from '@phosphor-icons/react';
 import { ToneWaveIcon, HanziSegmentIcon, ToneSegmentsIcon, ToneFrameIcon, EdgeJointsIcon } from './ToneIcons';
 
@@ -570,7 +570,9 @@ export default class App extends React.Component {
     waveEditId: null,        // block id currently in Wave Edit mode
     waveLive: null,          // { gi, control:{x,y}, end:{x,y}, tone } during a handle drag
     rewrite: null,           // { blockId, loading, error, candidates } — AI tone rewrite (sheet)
-    waveXform: null          // { blockId, phase:'pending'|'soften'|'sharpen'|'done', gi, candidates, idx } — auto morph
+    waveXform: null,         // { blockId, phase:'pending'|'soften'|'sharpen'|'done', gi, candidates, idx } — auto morph
+    drawMode: false,         // freehand "draw a tone line" mode (within Wave Edit)
+    drawPath: null           // [{x,y}] in block-local coords while drawing
   };
   _nextId = 2;
   _act = null;   // active pointer action
@@ -932,6 +934,45 @@ Respond with ONLY a JSON object:
     this._act = { type: 'wave', blockId, gi: spec.gi, which, p0, adv: spec.adv, endFixed: end, controlFixed: control, startPt, sx: t.clientX, sy: t.clientY, fromTone: spec.tone, lastTone: spec.tone, moved: false, preSnap: this.snap() };
     this.setState({ waveLive: { gi: spec.gi, p0, control, end, tone: spec.tone } });
   }
+  // begin a freehand tone-line draw over a block (points in block-local coords)
+  onDrawDown(e, blockId) {
+    if (e.type === 'mousedown' && e.button !== 0) return;
+    e.stopPropagation(); if (e.preventDefault) e.preventDefault();
+    const block = this.state.blocks.find(b => b.id === blockId); if (!block) return;
+    const t = e.touches ? e.touches[0] : e;
+    const w = this.toWorld(t.clientX, t.clientY);
+    const p = { x: w.x - block.x, y: w.y - block.y };
+    this._act = { type: 'draw', blockId, pts: [p], sx: t.clientX, sy: t.clientY, moved: false, preSnap: this.snap() };
+    this.setState({ drawPath: [p] });
+  }
+  // map a drawn line onto every hanzi: stretch its x-range across the characters,
+  // then classify each character's slice into a tone (relative shape, so the
+  // absolute height of the line doesn't matter — only its ups/downs/valleys).
+  mapDrawToTones(blockId, path) {
+    const block = this.state.blocks.find(b => b.id === blockId); if (!block) return null;
+    const M = this.scaleMetrics(this.metrics(), block.scale || 1);
+    const specs = this.layoutBlock(this.glyphsText(block.text), M, block.width, block.toneOverrides).specs.filter(s => !s.punct);
+    if (!specs.length || path.length < 2) return null;
+    const minX = Math.min(...path.map(p => p.x)), maxX = Math.max(...path.map(p => p.x));
+    const b0 = specs[0].sx, b1 = specs[specs.length - 1].sx + specs[specs.length - 1].adv;
+    const sorted = path.slice().sort((a, b) => a.x - b.x);
+    const yAt = (px) => {
+      if (px <= sorted[0].x) return sorted[0].y;
+      if (px >= sorted[sorted.length - 1].x) return sorted[sorted.length - 1].y;
+      for (let i = 1; i < sorted.length; i++) if (sorted[i].x >= px) { const t = (px - sorted[i - 1].x) / ((sorted[i].x - sorted[i - 1].x) || 1); return sorted[i - 1].y + t * (sorted[i].y - sorted[i - 1].y); }
+      return sorted[sorted.length - 1].y;
+    };
+    // map a block-x onto the drawn line's x-range (stretch the drawing across the text)
+    const toPathX = (bx) => { const f = (b1 - b0) ? (bx - b0) / (b1 - b0) : 0; return minX + Math.max(0, Math.min(1, f)) * (maxX - minX); };
+    const ov = {};
+    specs.forEach(s => {
+      const p0 = { x: 0, y: yAt(toPathX(s.sx)) };
+      const pm = { x: s.adv / 2, y: yAt(toPathX(s.sx + s.adv / 2)) };
+      const p2 = { x: s.adv, y: yAt(toPathX(s.sx + s.adv)) };
+      ov[s.gi] = this.classifyTone(p0, pm, p2, s.adv, M);
+    });
+    return ov;
+  }
   onMove(e) {
     const a = this._act; if (!a) return;
     const dx = e.clientX - a.sx, dy = e.clientY - a.sy;
@@ -967,6 +1008,11 @@ Respond with ONLY a JSON object:
       const tone = this.classifyTone(a.p0, control, end, a.adv, M);
       if (tone !== a.lastTone) { a.lastTone = tone; if (navigator.vibrate) navigator.vibrate(6); }  // haptic on class change
       this.setState({ waveLive: { gi: a.gi, p0: a.p0, control, end, tone } });
+    } else if (a.type === 'draw') {
+      const block = this.state.blocks.find(b => b.id === a.blockId);
+      const w = this.toWorld(e.clientX, e.clientY);
+      a.pts.push({ x: w.x - block.x, y: w.y - block.y });
+      this.setState({ drawPath: a.pts.slice() });
     } else {
       a.type = 'drag';
       const z = this.state.zoom, wdx = dx / z, wdy = dy / z;
@@ -999,6 +1045,18 @@ Respond with ONLY a JSON object:
           // shape-only: record history now; the chip lets them add a key to generate
           this._undo.push(a.preSnap); if (this._undo.length > 120) this._undo.shift(); this._redo = [];
           this.flash(`声调 ${this.toneName(a.fromTone)} → ${this.toneName(live.tone)}`);
+        }
+      }
+    } else if (a.type === 'draw') {
+      const path = a.pts;
+      this.setState({ drawPath: null, drawMode: false });
+      if (a.moved && path && path.length > 2) {
+        const ov = this.mapDrawToTones(a.blockId, path);
+        if (ov && Object.keys(ov).length) {
+          this.setState(s => ({ blocks: s.blocks.map(b => b.id === a.blockId ? { ...b, toneOverrides: { ...(b.toneOverrides || {}), ...ov } } : b) }));
+          if (navigator.vibrate) navigator.vibrate(8);
+          if (this.getAiKey()) this.startWaveTransform(a.blockId, null, a.preSnap);
+          else { this._undo.push(a.preSnap); if (this._undo.length > 120) this._undo.shift(); this._redo = []; this.flash('声调已按线条更新 · shaped to your line'); }
         }
       }
     } else if ((a.type === 'drag' || a.type === 'resize' || a.type === 'scale') && a.moved) {
@@ -1451,10 +1509,11 @@ Respond with ONLY a JSON object:
     } else {
       children.push(React.createElement('div', { key: 'svg', style: { position: 'absolute', left: 0, top: 0 } }, this.renderBlockSvg(block, M)));
     }
-    // Wave Edit: handles, or (while auto-transforming) the gradient breath shimmer
+    // Wave Edit: draw overlay, point handles, or the breath shimmer while morphing
     if (this.state.waveEditId === block.id && !editing && !empty) {
       const xf = this.state.waveXform, xfHere = xf && xf.blockId === block.id;
-      if (xfHere && xf.phase === 'pending') children.push(this.renderXformShimmer(block, lay.specs, bbox));
+      if (this.state.drawMode) children.push(this.renderDrawOverlay(block, bbox));
+      else if (xfHere && xf.phase === 'pending') children.push(this.renderXformShimmer(block, lay.specs, bbox));
       else if (!xfHere || xf.phase === 'done') children.push(this.renderWaveHandles(block, lay.specs, bbox));
       // soften / sharpen: show nothing — let the glyphs morph cleanly
     }
@@ -1552,6 +1611,22 @@ Respond with ONLY a JSON object:
       h('polyline', { key: 'glow', points, fill: 'none', stroke: `url(#${gid})`, strokeWidth: fs * 0.16, strokeLinecap: 'round', strokeLinejoin: 'round', style: { filter: 'blur(3px)', animation: 'tc-breathe 1.5s ease-in-out infinite' } }),
       // a highlight that sweeps along the wave
       h('polyline', { key: 'sweep', points, fill: 'none', stroke: `url(#${gid})`, strokeWidth: fs * 0.05, strokeLinecap: 'round', strokeLinejoin: 'round', strokeDasharray: `${fs * 0.9} ${fs * 20}`, style: { animation: 'tc-sweep 1.3s linear infinite' } })
+    );
+  }
+
+  // freehand draw capture + live gradient stroke (draw a tone line over the block)
+  renderDrawOverlay(block, bbox) {
+    const h = React.createElement;
+    const pad = 70;
+    const dp = this.state.drawPath;
+    const gid = 'tcdraw-' + block.id;
+    return h('div', { key: 'draw', style: { position: 'absolute', inset: `-${pad}px`, zIndex: 25 } },
+      h('div', { key: 'cap', onMouseDown: (e) => this.onDrawDown(e, block.id), onTouchStart: (e) => this.onDrawDown(e, block.id), style: { position: 'absolute', inset: 0, cursor: 'crosshair', touchAction: 'none', pointerEvents: 'auto' } }),
+      (dp && dp.length > 1) ? h('svg', { key: 'path', width: bbox.w, height: bbox.h, viewBox: `${bbox.x} ${bbox.y} ${bbox.w} ${bbox.h}`, style: { position: 'absolute', left: pad, top: pad, overflow: 'visible', pointerEvents: 'none' } },
+        h('defs', { key: 'd' }, h('linearGradient', { id: gid, x1: '0%', y1: '0%', x2: '100%', y2: '0%' },
+          h('stop', { offset: '0%', stopColor: '#2563eb' }), h('stop', { offset: '50%', stopColor: '#7c3aed' }), h('stop', { offset: '100%', stopColor: '#ef4444' }))),
+        h('polyline', { key: 'p', points: dp.map(p => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' '), fill: 'none', stroke: `url(#${gid})`, strokeWidth: this.metrics().FS * (block.scale || 1) * 0.055, strokeLinecap: 'round', strokeLinejoin: 'round', strokeOpacity: 0.95 })
+      ) : null
     );
   }
 
@@ -1854,6 +1929,16 @@ Respond with ONLY a JSON object:
         btn('⟳ 换一个 Another', () => this.anotherCandidate()),
         btn('↺ Undo', () => { this.endTransform(); this.undo(); }));
     }
+    // Draw-a-line chip / hint (Wave Edit)
+    const topBar2 = { position: 'absolute', top: 'calc(env(safe-area-inset-top) + 62px)', left: '50%', transform: 'translateX(-50%)', zIndex: 55 };
+    const drawChip = (st.waveEditId != null && !st.drawMode && !xf && !st.activeSheet) ? h('div', { key: 'drawchip', style: topBar2 },
+      h('button', { onClick: () => this.setState({ drawMode: true }), style: { display: 'flex', alignItems: 'center', gap: 7, padding: '9px 15px', borderRadius: 999, border: `1px solid ${TOK.sep}`, background: '#fff', color: TOK.ink, fontWeight: 600, fontSize: 13.5, boxShadow: '0 6px 20px rgba(28,25,23,0.12)', cursor: 'pointer' } },
+        h(Scribble, { size: 17 }), '手绘声调线 Draw a line')) : null;
+    const drawHint = st.drawMode ? h('div', { key: 'drawhint', style: { ...topBar2, display: 'flex', gap: 8, alignItems: 'center' } },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 7, padding: '9px 15px', borderRadius: 999, background: '#fff', border: `1px solid ${TOK.sep}`, boxShadow: '0 6px 20px rgba(28,25,23,0.12)', fontSize: 13.5, fontWeight: 600, color: TOK.ink } },
+        h(Scribble, { size: 16, color: TOK.accent }), '画一条线 · draw a tone line'),
+      h('button', { onClick: () => this.setState({ drawMode: false, drawPath: null }), 'aria-label': 'Cancel', style: { width: 34, height: 34, borderRadius: '50%', border: `1px solid ${TOK.sep}`, background: '#fff', cursor: 'pointer', color: TOK.inkSoft, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, h(X, { size: 16 }))) : null;
+
     // manual chip only when there's an override, no key set, and no transform running
     const waveBlk = st.waveEditId != null ? st.blocks.find(b => b.id === st.waveEditId) : null;
     const hasOverrides = waveBlk && waveBlk.toneOverrides && Object.keys(waveBlk.toneOverrides).length > 0;
@@ -1867,7 +1952,7 @@ Respond with ONLY a JSON object:
 
     return h('div', {
       style: { position: 'fixed', inset: 0, overflow: 'hidden', background: TOK.canvas, fontFamily: "system-ui,-apple-system,'Segoe UI',sans-serif", color: TOK.ink, WebkitFontSmoothing: 'antialiased' }
-    }, v.canvasContent, empty, topBar, dock, activeSheet, rewriteChip, waveTransformUi, toast);
+    }, v.canvasContent, empty, topBar, dock, activeSheet, rewriteChip, waveTransformUi, drawChip, drawHint, toast);
   }
 
   // ---- sheet bodies ----------------------------------------------------------
