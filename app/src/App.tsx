@@ -12,7 +12,7 @@ import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import {
   ArrowCounterClockwise, ArrowClockwise, ShareFat, DotsThree,
   TextT, Microphone, SlidersHorizontal, Palette, TextAa,
-  X, Check, Pause, Waveform, Info, Trash, PenNib,
+  X, Check, Pause, Waveform, Info, Trash, PenNib, Sparkle, Key,
 } from '@phosphor-icons/react';
 import { ToneWaveIcon, HanziSegmentIcon, ToneSegmentsIcon, ToneFrameIcon, EdgeJointsIcon } from './ToneIcons';
 
@@ -560,7 +560,8 @@ export default class App extends React.Component {
     showEdgeJoints: false,   // draw the seam dot where glyph cells meet
     toast: '',               // transient status message
     waveEditId: null,        // block id currently in Wave Edit mode
-    waveLive: null           // { gi, control:{x,y}, end:{x,y}, tone } during a handle drag
+    waveLive: null,          // { gi, control:{x,y}, end:{x,y}, tone } during a handle drag
+    rewrite: null            // { blockId, loading, error, candidates, target } — AI tone rewrite
   };
   _nextId = 2;
   _act = null;   // active pointer action
@@ -758,6 +759,102 @@ export default class App extends React.Component {
       })
     }));
   }
+
+  /* ---- Phase 2: AI rewrite by tone (OpenAI, direct from browser) ---- */
+  getAiKey() { try { return localStorage.getItem('tc_ai_key') || ''; } catch (e) { return ''; } }
+  setAiKeyPrompt() {
+    const cur = this.getAiKey();
+    const v = window.prompt('Paste your OpenAI API key (stored only in this browser):', cur ? '' : '');
+    if (v == null) return;
+    try { if (v.trim()) localStorage.setItem('tc_ai_key', v.trim()); else localStorage.removeItem('tc_ai_key'); } catch (e) {}
+    this.flash(v.trim() ? 'AI key saved (this browser)' : 'AI key cleared');
+  }
+  // per-hanzi original + target tone arrays for a block (target = with overrides applied)
+  blockHanziTones(block) {
+    const ov = block.toneOverrides || {};
+    const orig = [], target = [], changed = [];
+    let gi = 0;
+    for (const para of (block.text || '').split('\n')) {
+      const tp = this.lineTones(para);
+      for (let i = 0; i < para.length; i++) {
+        const info = this.detectTone(para[i], tp ? tp[i] : null);
+        if (info.kind === 'hanzi' || info.kind === 'neutral') {
+          const o = info.kind === 'neutral' ? 0 : info.tone;
+          const t = (ov[gi] != null) ? ov[gi] : o;
+          if (t !== o) changed.push(target.length);
+          orig.push(o); target.push(t);
+        }
+        gi++;
+      }
+      gi++;   // '\n'
+    }
+    return { orig, target, changed };
+  }
+  // re-derive a candidate's per-hanzi tones and compare to the target pattern
+  verifyCandidate(text, target) {
+    const got = [];
+    for (const para of (text || '').split('\n')) {
+      const tp = this.lineTones(para);
+      for (let i = 0; i < para.length; i++) {
+        const info = this.detectTone(para[i], tp ? tp[i] : null);
+        if (info.kind === 'hanzi' || info.kind === 'neutral') got.push(info.kind === 'neutral' ? 0 : info.tone);
+      }
+    }
+    const n = Math.min(got.length, target.length);
+    let off = Math.abs(got.length - target.length);
+    for (let i = 0; i < n; i++) if (got[i] !== target[i]) off++;
+    return { toneOff: off, toneMatch: off === 0 };
+  }
+  async rewriteByTone(blockId) {
+    const block = this.state.blocks.find(b => b.id === blockId);
+    if (!block) return;
+    const key = this.getAiKey();
+    if (!key) { this.setState({ activeSheet: 'rewrite', rewrite: { blockId, loading: false, error: 'no-key', candidates: null } }); return; }
+    const { orig, target, changed } = this.blockHanziTones(block);
+    this.setState({ activeSheet: 'rewrite', rewrite: { blockId, loading: true, error: null, candidates: null, target } });
+    const script = this.state.script === 'traditional' ? 'Traditional (繁體)' : 'Simplified (简体)';
+    const prompt =
+`Original sentence: 「${block.text}」
+Script: ${script}
+Per-hanzi surface tones as spoken (after sandhi): [${orig.join(', ')}]
+Target tone pattern (0 = neutral 轻声): [${target.join(', ')}]
+Changed hanzi positions (0-based): [${changed.join(', ')}]
+
+Rewrite into up to 3 natural, grammatical Mandarin sentences whose hanzi — read aloud with tone sandhi — match the TARGET tone pattern as closely as possible. Preserve the meaning, grammar, register, the ${script} script, and any punctuation; keep the same number of hanzi when possible. Never output nonsense to force the tones — prefer real, idiomatic Chinese. If an exact match is impossible, get as close as you can and note it.
+
+Respond with ONLY a JSON object of this shape:
+{"candidates":[{"candidate":"中文句子","tonePattern":[1,2,3,4,0],"changedIndices":[2,4],"meaningPreservation":"high|medium|low","note":"short reason"}]}`;
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+        body: JSON.stringify({
+          model: 'gpt-4o', temperature: 0.8, response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: 'You are an expert Mandarin writer and phonologist. Output only valid JSON.' },
+            { role: 'user', content: prompt }
+          ]
+        })
+      });
+      if (!res.ok) { const msg = res.status === 401 ? 'Invalid API key' : ('OpenAI error ' + res.status); throw new Error(msg); }
+      const data = await res.json();
+      const parsed = JSON.parse(data.choices[0].message.content);
+      let cands = Array.isArray(parsed) ? parsed : (parsed.candidates || []);
+      cands = cands.slice(0, 3).map(c => ({ ...c, ...this.verifyCandidate(c.candidate, target) }));
+      this.setState(s => (s.rewrite && s.rewrite.blockId === blockId) ? { rewrite: { ...s.rewrite, loading: false, candidates: cands } } : {});
+    } catch (e) {
+      this.setState(s => (s.rewrite && s.rewrite.blockId === blockId) ? { rewrite: { ...s.rewrite, loading: false, error: (e && e.message) || 'Request failed' } } : {});
+    }
+  }
+  applyCandidate(blockId, text) {
+    this.pushHistory();
+    this.setState(s => ({
+      blocks: s.blocks.map(b => { if (b.id !== blockId) return b; const nb = { ...b, text }; delete nb.toneOverrides; return nb; }),
+      activeSheet: null, rewrite: null, waveEditId: null
+    }));
+    this.flash('已应用改写 · rewrite applied');
+  }
+
   // begin dragging a control/end handle of one character
   onWaveDown(e, blockId, spec, which) {
     if (e.type === 'mousedown' && e.button !== 0) return;
@@ -1646,12 +1743,20 @@ export default class App extends React.Component {
 
     const activeSheet = this.renderActiveSheet(v, h, sheet);
 
+    // -- "Rewrite by tone" chip (Wave Edit + at least one manual tone override) -
+    const waveBlk = st.waveEditId != null ? st.blocks.find(b => b.id === st.waveEditId) : null;
+    const hasOverrides = waveBlk && waveBlk.toneOverrides && Object.keys(waveBlk.toneOverrides).length > 0;
+    const rewriteChip = (hasOverrides && !st.activeSheet) ? h('div', { key: 'rwchip', style: { position: 'absolute', left: '50%', bottom: 'calc(env(safe-area-inset-bottom) + 88px)', transform: 'translateX(-50%)', zIndex: 55 } },
+      h('button', { onClick: () => this.rewriteByTone(st.waveEditId), style: { display: 'flex', alignItems: 'center', gap: 7, padding: '11px 18px', borderRadius: 999, border: 'none', background: TOK.ink, color: '#fff', fontWeight: 600, fontSize: 14, boxShadow: '0 8px 24px rgba(28,25,23,0.28)', cursor: 'pointer' } },
+        h(Sparkle, { size: 17, weight: 'fill' }), '按声调改写文字')
+    ) : null;
+
     // -- toast -----------------------------------------------------------------
     const toast = st.toast ? h('div', { key: 'toast', style: { position: 'fixed', left: '50%', bottom: 'calc(100px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', background: TOK.ink, color: '#fff', fontSize: 13, fontWeight: 500, padding: '9px 15px', borderRadius: R.md, zIndex: 90, boxShadow: '0 8px 24px rgba(28,25,23,0.28)' } }, st.toast) : null;
 
     return h('div', {
       style: { position: 'fixed', inset: 0, overflow: 'hidden', background: TOK.canvas, fontFamily: "system-ui,-apple-system,'Segoe UI',sans-serif", color: TOK.ink, WebkitFontSmoothing: 'antialiased' }
-    }, v.canvasContent, empty, topBar, dock, activeSheet, toast);
+    }, v.canvasContent, empty, topBar, dock, activeSheet, rewriteChip, toast);
   }
 
   // ---- sheet bodies ----------------------------------------------------------
@@ -1661,6 +1766,7 @@ export default class App extends React.Component {
       case 'dictation': return this.sheetDictation(v, h, sheet);
       case 'tone': return this.sheetTone(v, h, sheet);
       case 'style': return this.sheetStyle(v, h, sheet);
+      case 'rewrite': return this.sheetRewrite(v, h, sheet);
       case 'more': return this.sheetMore(v, h, sheet);
       default: return null;
     }
@@ -1785,6 +1891,49 @@ export default class App extends React.Component {
     return sheet('Style', body, () => this.closeSheet());
   }
 
+  sheetRewrite(v, h, sheet) {
+    const rw = this.state.rewrite || {};
+    const keepShape = h('button', { key: 'ks', onClick: () => this.closeSheet(), style: { flex: 1, height: 44, borderRadius: R.md, border: `1px solid ${TOK.sep}`, background: TOK.panel, color: TOK.ink, fontWeight: 600, fontSize: 14, cursor: 'pointer' } }, 'Keep shape only');
+    let body;
+    if (rw.error === 'no-key') {
+      body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'center', padding: '8px 0' } },
+        h(Key, { size: 34, color: TOK.inkSoft }),
+        h('div', { style: { fontSize: 14, color: TOK.inkSoft, textAlign: 'center', lineHeight: 1.5 } }, 'Add your OpenAI API key to generate text that matches the new tone pattern. It is stored only in this browser.'),
+        h('button', { onClick: () => { this.setAiKeyPrompt(); if (this.getAiKey()) this.rewriteByTone(rw.blockId); }, style: { height: 44, padding: '0 20px', borderRadius: R.md, border: 'none', background: TOK.ink, color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' } }, 'Set API key'),
+        h('div', { style: { display: 'flex', width: '100%' } }, keepShape)
+      );
+    } else if (rw.loading) {
+      body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'center', padding: '20px 0' } },
+        h(Sparkle, { size: 30, color: TOK.accent, weight: 'fill', style: { animation: 'tc-pulse 1.2s ease-out infinite' } }),
+        h('div', { style: { fontSize: 14, color: TOK.inkSoft } }, '正在按声调生成… · generating')
+      );
+    } else if (rw.error) {
+      body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'center', padding: '8px 0' } },
+        h('div', { style: { fontSize: 14, color: TOK.rec, textAlign: 'center' } }, rw.error),
+        h('div', { style: { display: 'flex', gap: 10, width: '100%' } }, keepShape, h('button', { onClick: () => this.rewriteByTone(rw.blockId), style: { flex: 1, height: 44, borderRadius: R.md, border: 'none', background: TOK.ink, color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' } }, 'Retry'))
+      );
+    } else {
+      const cands = rw.candidates || [];
+      const rows = cands.length ? cands.map((c, i) => {
+        const badge = c.toneMatch
+          ? h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, fontWeight: 600, color: '#15803d', background: 'rgba(34,197,94,0.12)', padding: '2px 7px', borderRadius: 999 } }, h(Check, { size: 12, weight: 'bold' }), 'tones match')
+          : h('span', { style: { fontSize: 11, fontWeight: 600, color: '#b45309', background: 'rgba(234,179,8,0.14)', padding: '2px 7px', borderRadius: 999 } }, `${c.toneOff} off`);
+        const meaning = c.meaningPreservation ? h('span', { style: { fontSize: 11, color: TOK.inkSoft } }, 'meaning: ' + c.meaningPreservation) : null;
+        return h('div', { key: i, style: { border: `1px solid ${TOK.sep}`, borderRadius: R.lg, padding: '12px 13px', display: 'flex', flexDirection: 'column', gap: 8 } },
+          h('div', { style: { fontFamily: this.fontStack('noto-sans', this.state.script), fontSize: 20, fontWeight: 600, color: TOK.ink, lineHeight: 1.35 } }, c.candidate),
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } }, badge, meaning),
+          c.note ? h('div', { style: { fontSize: 12, color: TOK.inkSoft, lineHeight: 1.4 } }, c.note) : null,
+          h('button', { onClick: () => this.applyCandidate(rw.blockId, c.candidate), style: { alignSelf: 'flex-start', height: 36, padding: '0 16px', borderRadius: R.md, border: 'none', background: TOK.accent, color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer' } }, 'Apply')
+        );
+      }) : [h('div', { key: 'none', style: { fontSize: 14, color: TOK.inkSoft, textAlign: 'center', padding: '8px 0' } }, 'No natural sentence matched — try “Keep shape only”.')];
+      body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+        ...rows,
+        h('div', { style: { display: 'flex', gap: 10, marginTop: 2 } }, keepShape, h('button', { onClick: () => this.rewriteByTone(rw.blockId), style: { flex: 1, height: 44, borderRadius: R.md, border: `1px solid ${TOK.sep}`, background: TOK.panel, color: TOK.ink, fontWeight: 600, fontSize: 14, cursor: 'pointer' } }, 'More'))
+      );
+    }
+    return sheet('Rewrite by tone', body, () => this.closeSheet());
+  }
+
   sheetMore(v, h, sheet) {
     const st = this.state;
     const toggleRow = (Comp, label, on, onClick) => h('button', { key: label, onClick,
@@ -1800,6 +1949,7 @@ export default class App extends React.Component {
       toggleRow(ToneFrameIcon, 'Tone Frames', st.showFrames, () => this.setState(s => ({ showFrames: !s.showFrames }))),
       toggleRow(EdgeJointsIcon, 'Edge Joints', st.showEdgeJoints, () => this.toggleEdgeJoints()),
       h('div', { style: { height: 1, background: TOK.sep, margin: '6px 0' } }),
+      actionRow(Key, this.getAiKey() ? 'AI Key · set (tap to change)' : 'AI Key · not set (for Rewrite)', () => this.setAiKeyPrompt()),
       actionRow(Trash, 'Reset Canvas', () => { if (typeof window !== 'undefined' && window.confirm('Clear the whole canvas?')) this.resetCanvas(); }, true),
       actionRow(Info, 'About', () => this.flash('Tone Canvas · Mandarin tone typography'))
     );
