@@ -104,6 +104,13 @@ export default class App extends React.Component {
     'warm, clever, and fun without becoming random or childish'
   ];
 
+  static DRAW_POEM_MOODS = [
+    'like a line from a contemporary Chinese prose poem, clean and vivid',
+    'modern, lyrical, and image-rich, with an urban or everyday spark',
+    'fresh and slightly surprising, like a short new Chinese poem',
+    'quietly poetic, concrete, and modern rather than classical or ornate'
+  ];
+
   static TONE_CHAR_FALLBACKS = {
     1: '春天花风星灯山书心新光飞歌猫桌杯粥',
     2: '人明白学文鱼云茶林河田情奇羊糖桥',
@@ -510,12 +517,12 @@ export default class App extends React.Component {
         faces.push(this.glyphFace(s, faceFill, 1, null, MB, id + '-f', id));
       }
       if (showSeg || motion) {
-        // Hybrid (Hanzi + Segments): a bold accent-coloured tone line under the
-        // glyphs so the contour reads clearly. Segments Only: the block colour.
-        const segColor = segOnly ? faceFill : TOK.accent;
+        // Hybrid (Hanzi + Segments): draw the editable tone guide above the glyphs
+        // so it stays easy to grab without covering character centers.
+        const segColor = TOK.ink;
         const segOp = segOnly ? 0.95 : 0.9;
         const segW = segOnly ? 0.05 : 0.09;
-        segs.push(this.segmentLine(s, segColor, segOp, segW, id + '-s', MB));
+        segs.push(this.segmentLine(s, segColor, segOp, segW, id + '-s', MB, segOnly ? 0 : this.toneGuideYOffset(MB)));
       }
       if (this.state.showEdgeJoints) joints.push(this.jointDot(s, faceFill, id + '-j', MB));
       if (this.state.showFrames) this.debugFrame(s, id, MB).forEach(f => frames.push(f));
@@ -541,14 +548,16 @@ export default class App extends React.Component {
   }
 
   // a single clean tone-segment line for a spec (the connecting wave)
-  segmentLine(spec, color, opacity, widthMul, key, M) {
+  toneGuideYOffset(M) { return -(M.FS / 2 + 8); }
+  pointWithGuideOffset(p, offsetY) { return { x: p.x, y: p.y + (offsetY || 0) }; }
+  segmentLine(spec, color, opacity, widthMul, key, M, offsetY = 0) {
     const w = M.FS * (widthMul || 0.05);
     if (spec.kind === 'fold') {
       const vx = spec.sx + spec.adv / 2, vy = spec.sy + spec.dip, ex = spec.sx + spec.adv, ey = spec.sy;
-      return React.createElement('polyline', { key, points: `${spec.sx},${spec.sy} ${vx},${vy} ${ex},${ey}`, fill: 'none', stroke: color, strokeOpacity: opacity, strokeWidth: w, strokeLinecap: 'round', strokeLinejoin: 'round' });
+      return React.createElement('polyline', { key, points: `${spec.sx},${spec.sy + offsetY} ${vx},${vy + offsetY} ${ex},${ey + offsetY}`, fill: 'none', stroke: color, strokeOpacity: opacity, strokeWidth: w, strokeLinecap: 'round', strokeLinejoin: 'round' });
     }
     const ex = spec.sx + spec.adv, ey = spec.sy + spec.dy;
-    return React.createElement('line', { key, x1: spec.sx, y1: spec.sy, x2: ex, y2: ey, stroke: color, strokeOpacity: opacity, strokeWidth: w, strokeLinecap: 'round' });
+    return React.createElement('line', { key, x1: spec.sx, y1: spec.sy + offsetY, x2: ex, y2: ey + offsetY, stroke: color, strokeOpacity: opacity, strokeWidth: w, strokeLinecap: 'round' });
   }
 
   // the seam dot at a glyph cell's start edge (Edge Joints)
@@ -587,9 +596,11 @@ export default class App extends React.Component {
     rewrite: null,           // { blockId, loading, error, candidates } — AI tone rewrite (sheet)
     waveXform: null,         // { blockId, phase:'pending'|'soften'|'sharpen'|'done', gi, candidates, idx } — auto morph
     drawMode: false,         // freehand tone-line-to-phrase mode
-    drawPath: null           // [{x,y}] in world coords while drawing
+    drawPath: null,          // [{x,y}] in world coords while drawing
+    drawGuides: []           // persistent normalized tone lines from draw mode
   };
   _nextId = 2;
+  _nextGuideId = 1;
   _act = null;   // active pointer action
   _space = false; // spacebar held -> pan mode
   _undo = [];
@@ -649,21 +660,21 @@ export default class App extends React.Component {
     const { panX, panY, zoom } = this.state;
     return { x: (cx - panX) / zoom, y: (cy - panY) / zoom };
   }
-  snap() { return JSON.stringify({ blocks: this.state.blocks, selectedIds: this.state.selectedIds }); }
+  snap() { return JSON.stringify({ blocks: this.state.blocks, selectedIds: this.state.selectedIds, drawGuides: this.state.drawGuides }); }
   pushHistory() { this._undo.push(this.snap()); if (this._undo.length > 120) this._undo.shift(); this._redo = []; }
   pushSnapshot(snap) { if (!snap) return; this._undo.push(snap); if (this._undo.length > 120) this._undo.shift(); this._redo = []; }
-  restoreSnapshot(snap) { if (!snap) return; const s = JSON.parse(snap); this.setState({ blocks: s.blocks, selectedIds: s.selectedIds, editingId: null }); }
+  restoreSnapshot(snap) { if (!snap) return; const s = JSON.parse(snap); this.setState({ blocks: s.blocks, selectedIds: s.selectedIds, drawGuides: s.drawGuides || [], editingId: null }); }
   undo() {
     if (!this._undo.length) return;
     this._redo.push(this.snap());
     const s = JSON.parse(this._undo.pop());
-    this.setState({ blocks: s.blocks, selectedIds: s.selectedIds, editingId: null });
+    this.setState({ blocks: s.blocks, selectedIds: s.selectedIds, drawGuides: s.drawGuides || [], editingId: null });
   }
   redo() {
     if (!this._redo.length) return;
     this._undo.push(this.snap());
     const s = JSON.parse(this._redo.pop());
-    this.setState({ blocks: s.blocks, selectedIds: s.selectedIds, editingId: null });
+    this.setState({ blocks: s.blocks, selectedIds: s.selectedIds, drawGuides: s.drawGuides || [], editingId: null });
   }
   blockWorldRect(b, M) {
     const { bbox } = this.layoutBlock(this.glyphsText(b.text), this.scaleMetrics(M, b.scale || 1), b.width, b.toneOverrides);
@@ -954,7 +965,7 @@ Respond with ONLY a JSON object:
     }).filter(c => c.candidate && c.toneMatch && c.lockedMatch);
     return checked.slice(0, 3);
   }
-  tonePatternFromPath(path) {
+  normalizeDrawPath(path) {
     const M = this.metrics();
     if (!path || path.length < 2) return null;
     const xs = path.map(p => p.x);
@@ -975,30 +986,88 @@ Respond with ONLY a JSON object:
     };
     const n = Math.max(2, Math.min(14, Math.round(range / (M.ADV * 0.92))));
     const tones = [];
+    const rawMidYs = [];
+    const adv = range / n;
+    const startY = yAt(minX);
+    const points = [{ x: minX, y: startY }];
+    let y = startY;
+    const slope = M.SLOPE || Math.tan((18 * Math.PI) / 180);
+    const foldDip = (adv / 2) * Math.tan((M.FOLD_ANGLE * Math.PI) / 180);
     for (let i = 0; i < n; i++) {
       const x0 = minX + (i / n) * range;
       const xm = minX + ((i + 0.5) / n) * range;
       const x2 = minX + ((i + 1) / n) * range;
-      tones.push(this.classifyTone(
+      const tone = this.classifyTone(
         { x: 0, y: yAt(x0) },
         { x: M.ADV / 2, y: yAt(xm) },
         { x: M.ADV, y: yAt(x2) },
         M.ADV,
         M
-      ));
+      );
+      tones.push(tone);
+      rawMidYs.push(yAt(xm));
+
+      if (tone === 2) {
+        y -= slope * adv;
+        points.push({ x: x2, y });
+      } else if (tone === 4) {
+        y += slope * adv;
+        points.push({ x: x2, y });
+      } else if (tone === 3) {
+        points.push({ x: xm, y: y + foldDip });
+        points.push({ x: x2, y });
+      } else {
+        points.push({ x: x2, y });
+      }
     }
-    return tones;
+    const normMidYs = tones.map((tone, i) => {
+      const x0 = minX + (i / n) * range;
+      const xm = minX + ((i + 0.5) / n) * range;
+      const x2 = minX + ((i + 1) / n) * range;
+      const y0 = this.interpolatePathY(points, x0);
+      const y2 = this.interpolatePathY(points, x2);
+      if (tone === 3) return this.interpolatePathY(points, xm);
+      return (y0 + y2) / 2;
+    });
+    const offsetY = rawMidYs.reduce((sum, val, i) => sum + (val - (normMidYs[i] || val)), 0) / rawMidYs.length;
+    return {
+      tones,
+      points: points.map(p => ({ x: p.x, y: p.y + offsetY })),
+      bbox: {
+        x: minX,
+        y: Math.min(...points.map(p => p.y + offsetY)),
+        w: range,
+        h: Math.max(...points.map(p => p.y + offsetY)) - Math.min(...points.map(p => p.y + offsetY))
+      }
+    };
+  }
+  interpolatePathY(path, px) {
+    if (!path || !path.length) return 0;
+    const sorted = path.slice().sort((a, b) => a.x - b.x);
+    if (px <= sorted[0].x) return sorted[0].y;
+    if (px >= sorted[sorted.length - 1].x) return sorted[sorted.length - 1].y;
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].x >= px) {
+        const t = (px - sorted[i - 1].x) / ((sorted[i].x - sorted[i - 1].x) || 1);
+        return sorted[i - 1].y + t * (sorted[i].y - sorted[i - 1].y);
+      }
+    }
+    return sorted[sorted.length - 1].y;
+  }
+  tonePatternFromPath(path) {
+    const normalized = this.normalizeDrawPath(path);
+    return normalized ? normalized.tones : null;
   }
   async fetchPhraseForTonePattern(target, avoid) {
     if (!target || !target.length) throw new Error('No tone line detected');
-    const mood = App.REWRITE_MOODS[Math.floor(Math.random() * App.REWRITE_MOODS.length)];
+    const mood = App.DRAW_POEM_MOODS[Math.floor(Math.random() * App.DRAW_POEM_MOODS.length)];
     const prompt =
-`A user drew a tone contour. Convert it into one natural Mandarin phrase or short sentence.
+`A user drew a tone contour. Convert it into one natural Mandarin phrase or short sentence that tends toward a modern Chinese poem.
 Target surface tone pattern after tone sandhi (0 = neutral 轻声): [${target.join(', ')}]
 Length: exactly ${target.length} Hanzi.
 ${avoid && avoid.length ? 'Do NOT repeat any of these: ' + avoid.map(a => '「' + a + '」').join(', ') + '\n' : ''}
 Produce up to 5 candidates. Each candidate must be exactly ${target.length} Chinese characters, with no punctuation, spaces, Latin letters, or digits. The spoken surface-tone pattern must match the target exactly.
-Make the content ${mood}. It may be a phrase, image, or tiny surprising sentence, but it must sound like real Mandarin.
+Make the content ${mood}. Prefer contemporary Mandarin poetic imagery: concrete nouns, light emotional motion, city/night/weather/body/screen/light details, and a little surprise. Avoid classical diction, idioms, slogans, generic encouragement, and childish randomness. Tone accuracy and natural Mandarin are more important than sounding poetic.
 
 Respond with ONLY a JSON object:
 {"candidates":[{"candidate":"中文短句","tonePattern":[1,2,3],"note":"short reason"}]}`;
@@ -1023,7 +1092,7 @@ Respond with ONLY a JSON object:
       return pool[(Math.random() * pool.length) | 0] || '花';
     }).join('');
   }
-  async generatePhraseFromDraw(target, path, preSnap) {
+  async generatePhraseFromDraw(target, path, preSnap, guideId = null) {
     this.flash('正在按线条生成短句 · shaping phrase');
     let cands = null;
     try { cands = await this.fetchPhraseForTonePattern(target); } catch (e) { cands = null; }
@@ -1044,16 +1113,37 @@ Respond with ONLY a JSON object:
       x: 0,
       y: 0,
       text,
+      toneOverrides: Object.fromEntries(target.map((tone, i) => [i, tone])),
       color: source ? (source.color || this.state.defColor) : this.state.defColor,
       weight: source ? (source.weight != null ? source.weight : this.state.defWeight) : this.state.defWeight,
       font: source ? (source.font || this.state.defFont) : this.state.defFont
     };
-    const MB = this.scaleMetrics(this.metrics(), block.scale || 1);
-    const { bbox } = this.layoutBlock(this.glyphsText(text), MB, undefined, undefined);
-    block.x = cx - (bbox.x + bbox.w / 2);
-    block.y = cy - (bbox.y + bbox.h / 2);
+    const baseM = this.metrics();
+    const baseLay = this.layoutBlock(this.glyphsText(text), this.scaleMetrics(baseM, 1), Infinity, block.toneOverrides);
+    const baseSpecs = baseLay.specs.filter(s => !s.punct);
+    if (baseSpecs.length && path.length > 1) {
+      const first = baseSpecs[0], last = baseSpecs[baseSpecs.length - 1];
+      const baseSpan = Math.max(baseM.ADV, (last.sx + last.adv) - first.sx);
+      const pathSpan = Math.max(baseM.ADV * 0.5, path[path.length - 1].x - path[0].x);
+      block.scale = Math.max(0.55, Math.min(2.2, pathSpan / baseSpan));
+    }
+    const MB = this.scaleMetrics(baseM, block.scale || 1);
+    const { specs, bbox } = this.layoutBlock(this.glyphsText(text), MB, Infinity, block.toneOverrides);
+    const firstSpec = specs.find(s => !s.punct);
+    if (firstSpec && path.length) {
+      block.x = path[0].x - firstSpec.sx;
+      block.y = path[0].y - (firstSpec.sy + this.toneGuideYOffset(MB));
+      block.width = Math.max(MB.ADV, path[path.length - 1].x - path[0].x + MB.ADV * 0.2);
+    } else {
+      block.x = cx - (bbox.x + bbox.w / 2);
+      block.y = cy - (bbox.y + bbox.h / 2);
+    }
     this.pushSnapshot(preSnap);
-    this.setState(s => ({ blocks: [...s.blocks, block], selectedIds: [block.id] }));
+    this.setState(s => ({
+      blocks: [...s.blocks, block],
+      selectedIds: [block.id],
+      drawGuides: guideId == null ? s.drawGuides : (s.drawGuides || []).filter(g => g.id !== guideId)
+    }));
     this.flash('已生成匹配线条的短句 · phrase matched');
   }
   async rewriteByTone(blockId) {
@@ -1173,9 +1263,11 @@ Respond with ONLY a JSON object:
     const control = spec.kind === 'fold'
       ? { x: spec.sx + spec.adv / 2, y: spec.sy + spec.dip }
       : { x: (p0.x + end.x) / 2, y: (p0.y + end.y) / 2 };
-    const startPt = which === 'end' ? end : control;
-    const live = { gi: spec.gi, p0, control, end, tone: spec.tone };
-    this._act = { type: 'wave', blockId, gi: spec.gi, which, p0, adv: spec.adv, endFixed: end, controlFixed: control, startPt, sx: t.clientX, sy: t.clientY, fromTone: spec.tone, lastTone: spec.tone, live, moved: false, preSnap: this.snap() };
+    const M = this.scaleMetrics(this.metrics(), (this.state.blocks.find(b => b.id === blockId) || {}).scale || 1);
+    const guideOffsetY = this.toneGuideYOffset(M);
+    const startPt = this.pointWithGuideOffset(which === 'end' ? end : control, guideOffsetY);
+    const live = { gi: spec.gi, p0, control, end, tone: spec.tone, guideOffsetY };
+    this._act = { type: 'wave', blockId, gi: spec.gi, which, p0, adv: spec.adv, endFixed: end, controlFixed: control, startPt, guideOffsetY, sx: t.clientX, sy: t.clientY, fromTone: spec.tone, lastTone: spec.tone, live, moved: false, preSnap: this.snap() };
     this.setState({ waveLive: live });
   }
   // begin a freehand tone-line draw on the canvas (points in world coords)
@@ -1215,13 +1307,14 @@ Respond with ONLY a JSON object:
       this.applyScale(a.id, a.startScale * (dist / a.startDist), a.cx, a.cy);
     } else if (a.type === 'wave') {
       const z = this.state.zoom;
-      const pt = { x: a.startPt.x + dx / z, y: a.startPt.y + dy / z };
+      const visualPt = { x: a.startPt.x + dx / z, y: a.startPt.y + dy / z };
+      const pt = { x: visualPt.x, y: visualPt.y - (a.guideOffsetY || 0) };
       const end = a.which === 'end' ? pt : a.endFixed;
       const control = a.which === 'control' ? pt : { x: (a.p0.x + end.x) / 2, y: (a.p0.y + end.y) / 2 };
       const M = this.scaleMetrics(this.metrics(), (this.state.blocks.find(b => b.id === a.blockId) || {}).scale || 1);
       const tone = this.classifyTone(a.p0, control, end, a.adv, M);
       if (tone !== a.lastTone) { a.lastTone = tone; if (navigator.vibrate) navigator.vibrate(6); }  // haptic on class change
-      a.live = { gi: a.gi, p0: a.p0, control, end, tone };
+      a.live = { gi: a.gi, p0: a.p0, control, end, tone, guideOffsetY: a.guideOffsetY || 0 };
       this.setState({ waveLive: a.live });
     } else if (a.type === 'draw') {
       a.pts.push(this.toWorld(e.clientX, e.clientY));
@@ -1275,10 +1368,13 @@ Respond with ONLY a JSON object:
           this.flash('从左到右画一条线  →  ·  draw left to right');
           return;   // keep drawMode on so they can try again
         }
-        const target = this.tonePatternFromPath(path);
-        if (!target || !target.length) { this.flash('画长一点的声调线 · draw a longer tone line'); return; }
+        const normalized = this.normalizeDrawPath(path);
+        if (!normalized || !normalized.tones || !normalized.tones.length) { this.flash('画长一点的声调线 · draw a longer tone line'); return; }
+        const guide = { id: this._nextGuideId++, points: normalized.points, tones: normalized.tones };
+        this.pushSnapshot(a.preSnap);
+        this.setState(s => ({ drawGuides: [...(s.drawGuides || []), guide] }));
         if (navigator.vibrate) navigator.vibrate(8);
-        this.generatePhraseFromDraw(target, path, a.preSnap);
+        this.generatePhraseFromDraw(normalized.tones, normalized.points, null, guide.id);
       }
     } else if ((a.type === 'drag' || a.type === 'resize' || a.type === 'scale') && a.moved) {
       this._undo.push(a.preSnap); if (this._undo.length > 120) this._undo.shift(); this._redo = [];
@@ -1790,23 +1886,36 @@ Respond with ONLY a JSON object:
     const r = 7 / z, sw = 2 / z;
     const live = this.state.waveLive;
     const els = [];
+    const MB = this.scaleMetrics(this.metrics(), block.scale || 1);
+    const guideOffsetY = this.toneGuideYOffset(MB);
+    const guideStroke = '#1c1917';
+    const handleStroke = '#78716c';
+    const handleFill = '#ffffff';
+    const endFill = '#44403c';
     specs.forEach(s => {
       if (s.punct) return;
+      els.push(this.segmentLine(s, guideStroke, 0.95, 0.045, 'guide-' + s.gi, MB, guideOffsetY));
       const p0 = { x: s.sx, y: s.sy };
       const end = { x: s.sx + s.adv, y: s.kind === 'fold' ? s.sy : s.sy + (s.dy || 0) };
       const control = s.kind === 'fold' ? { x: s.sx + s.adv / 2, y: s.sy + s.dip } : { x: (p0.x + end.x) / 2, y: (p0.y + end.y) / 2 };
+      const vControl = this.pointWithGuideOffset(control, guideOffsetY);
+      const vEnd = this.pointWithGuideOffset(end, guideOffsetY);
       const hit = 20 / z;
       const dl = (which) => ({ style: { pointerEvents: 'auto', cursor: 'grab', touchAction: 'none' }, onMouseDown: (e) => this.onWaveDown(e, block.id, s, which), onTouchStart: (e) => this.onWaveDown(e, block.id, s, which) });
       // control: transparent hit halo + hollow dot
-      els.push(h('circle', { key: 'ch' + s.gi, cx: control.x, cy: control.y, r: hit, fill: 'transparent', ...dl('control') }));
-      els.push(h('circle', { key: 'c' + s.gi, cx: control.x, cy: control.y, r: r * 0.72, fill: '#fff', stroke: TOK.accent, strokeWidth: sw, style: { pointerEvents: 'none' } }));
+      els.push(h('circle', { key: 'ch' + s.gi, cx: vControl.x, cy: vControl.y, r: hit, fill: 'transparent', ...dl('control') }));
+      els.push(h('circle', { key: 'c' + s.gi, cx: vControl.x, cy: vControl.y, r: r * 0.72, fill: handleFill, stroke: handleStroke, strokeWidth: sw, style: { pointerEvents: 'none' } }));
       // end: transparent hit halo + filled dot
-      els.push(h('circle', { key: 'eh' + s.gi, cx: end.x, cy: end.y, r: hit, fill: 'transparent', ...dl('end') }));
-      els.push(h('circle', { key: 'e' + s.gi, cx: end.x, cy: end.y, r, fill: TOK.accent, stroke: '#fff', strokeWidth: sw, style: { pointerEvents: 'none' } }));
+      els.push(h('circle', { key: 'eh' + s.gi, cx: vEnd.x, cy: vEnd.y, r: hit, fill: 'transparent', ...dl('end') }));
+      els.push(h('circle', { key: 'e' + s.gi, cx: vEnd.x, cy: vEnd.y, r, fill: endFill, stroke: handleFill, strokeWidth: sw, style: { pointerEvents: 'none' } }));
     });
     if (live) {
-      els.push(h('polyline', { key: 'lv', points: `${live.p0.x},${live.p0.y} ${live.control.x},${live.control.y} ${live.end.x},${live.end.y}`, fill: 'none', stroke: TOK.accent, strokeWidth: 3 / z, strokeDasharray: `${7 / z} ${5 / z}`, strokeLinecap: 'round', strokeLinejoin: 'round' }));
-      els.push(h('text', { key: 'lb', x: live.end.x + 10 / z, y: live.end.y - 10 / z, fill: TOK.accent, fontSize: 15 / z, fontWeight: 700, fontFamily: 'system-ui, sans-serif', style: { userSelect: 'none' } }, '→ ' + this.toneName(live.tone)));
+      const off = live.guideOffsetY != null ? live.guideOffsetY : guideOffsetY;
+      const lp0 = this.pointWithGuideOffset(live.p0, off);
+      const lc = this.pointWithGuideOffset(live.control, off);
+      const le = this.pointWithGuideOffset(live.end, off);
+      els.push(h('polyline', { key: 'lv', points: `${lp0.x},${lp0.y} ${lc.x},${lc.y} ${le.x},${le.y}`, fill: 'none', stroke: guideStroke, strokeWidth: 3 / z, strokeDasharray: `${7 / z} ${5 / z}`, strokeLinecap: 'round', strokeLinejoin: 'round' }));
+      els.push(h('text', { key: 'lb', x: le.x + 10 / z, y: le.y - 10 / z, fill: guideStroke, fontSize: 15 / z, fontWeight: 700, fontFamily: 'system-ui, sans-serif', style: { userSelect: 'none' } }, '→ ' + this.toneName(live.tone)));
     }
     return h('svg', { key: 'wave', width: bbox.w, height: bbox.h, viewBox: `${bbox.x} ${bbox.y} ${bbox.w} ${bbox.h}`, style: { position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none', zIndex: 22 } }, els);
   }
@@ -1838,6 +1947,33 @@ Respond with ONLY a JSON object:
 
   // Canvas-wide draw capture: each left-to-right stroke becomes a new phrase
   // whose actual character tones match the drawn contour.
+  renderDrawGuides(h) {
+    const guides = this.state.drawGuides || [];
+    if (!guides.length) return null;
+    const { panX, panY, zoom } = this.state;
+    const toScreen = (p) => ({ x: p.x * zoom + panX, y: p.y * zoom + panY });
+    return h('svg', {
+      key: 'draw-guides',
+      width: '100%',
+      height: '100%',
+      viewBox: `0 0 ${window.innerWidth || 1} ${window.innerHeight || 1}`,
+      style: { position: 'fixed', inset: 0, overflow: 'visible', pointerEvents: 'none', zIndex: 44 }
+    },
+      guides.map(g => h('polyline', {
+        key: g.id,
+        points: (g.points || []).map(p => {
+          const s = toScreen(p);
+          return s.x.toFixed(1) + ',' + s.y.toFixed(1);
+        }).join(' '),
+        fill: 'none',
+        stroke: TOK.ink,
+        strokeWidth: Math.max(2.5, this.metrics().FS * 0.045 * zoom),
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        strokeOpacity: 0.88
+      }))
+    );
+  }
   renderCanvasDrawOverlay(h) {
     if (!this.state.drawMode) return null;
     const dp = this.state.drawPath;
@@ -1879,7 +2015,7 @@ Respond with ONLY a JSON object:
   closeSheet() { if (this.state.recording) this.stopDictation(); this.setState({ activeSheet: null }); }
   setCanvasMode(m) { this.setState({ canvasMode: m }); }
   toggleEdgeJoints() { this.setState(s => ({ showEdgeJoints: !s.showEdgeJoints })); }
-  resetCanvas() { this.pushHistory(); this.setState({ blocks: [], selectedIds: [], editingId: null, activeSheet: null }); }
+  resetCanvas() { this.pushHistory(); this.setState({ blocks: [], selectedIds: [], drawGuides: [], editingId: null, activeSheet: null }); }
   flash(msg) { this.setState({ toast: msg }); clearTimeout(this._toastT); this._toastT = setTimeout(() => this.setState({ toast: '' }), 1800); }
   share() { this.flash('Export coming soon'); }
   playMotion() {
@@ -2153,6 +2289,7 @@ Respond with ONLY a JSON object:
     );
 
     const activeSheet = this.renderActiveSheet(v, h, sheet);
+    const drawGuides = this.renderDrawGuides(h);
     const canvasDrawOverlay = this.renderCanvasDrawOverlay(h);
 
     // -- Wave transform UI: pending label, done controls, or (no key) the chip --
@@ -2192,7 +2329,7 @@ Respond with ONLY a JSON object:
 
     return h('div', {
       style: { position: 'fixed', inset: 0, overflow: 'hidden', background: TOK.canvas, fontFamily: "system-ui,-apple-system,'Segoe UI',sans-serif", color: TOK.ink, WebkitFontSmoothing: 'antialiased' }
-    }, v.canvasContent, empty, canvasDrawOverlay, topBar, dock, activeSheet, rewriteChip, waveTransformUi, drawChip, drawHint, toast);
+    }, v.canvasContent, empty, drawGuides, canvasDrawOverlay, topBar, dock, activeSheet, rewriteChip, waveTransformUi, drawChip, drawHint, toast);
   }
 
   // ---- sheet bodies ----------------------------------------------------------
