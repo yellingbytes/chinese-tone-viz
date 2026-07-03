@@ -12,7 +12,7 @@ import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import {
   ArrowCounterClockwise, ArrowClockwise, ShareFat, DotsThree,
   TextT, Microphone, SlidersHorizontal, Palette, TextAa,
-  X, Check, Pause, Waveform, Info, Trash, PenNib, Sparkle, Key, Scribble, PencilSimple,
+  X, Check, Pause, Waveform, Info, Trash, PenNib, Sparkle, Key, Scribble, PencilSimple, CopySimple,
 } from '@phosphor-icons/react';
 import { ToneWaveIcon, HanziSegmentIcon, ToneSegmentsIcon, ToneFrameIcon, EdgeJointsIcon } from './ToneIcons';
 
@@ -585,6 +585,7 @@ export default class App extends React.Component {
     recording: false,        // live Chinese dictation in progress
     recStatus: '',           // short status line shown on the record chip
     activeSheet: null,       // null | 'dictation' | 'tone' | 'style' | 'motion' | 'more'
+    toolbarMenu: null,       // null | contextual second-level toolbar menu
     canvasMode: 'hanziSegments', // 'hanzi' | 'hanziSegments' | 'segmentsOnly' | 'motionPreview'
     motionPlaying: false,    // Motion preview animation in progress
     motionSpeed: 1,          // 0.5 | 1 | 2
@@ -688,7 +689,7 @@ export default class App extends React.Component {
       return { zoom: z, panX: cx - (cx - s.panX) * k, panY: cy - (cy - s.panY) * k };
     });
   }
-  startEdit(id) { this._editPre = this.snap(); this._editDirty = false; this.setState({ editingId: id, selectedIds: [id] }); }
+  startEdit(id) { this._editPre = this.snap(); this._editDirty = false; this.setState({ editingId: id, selectedIds: [id], toolbarMenu: null }); }
 
   /* ---- pointer interaction ---- */
   onBgDown(e) {
@@ -699,7 +700,7 @@ export default class App extends React.Component {
     if (e.button !== 0) return;
     // left-drag on empty space -> marquee box-select; a plain click adds text
     this._act = { type: 'maybe-marquee', sx: e.clientX, sy: e.clientY, add: e.shiftKey, base: e.shiftKey ? this.state.selectedIds.slice() : [], moved: false, hadSel: this.state.selectedIds.length > 0 };
-    if (!e.shiftKey && this.state.selectedIds.length) this.setState({ selectedIds: [], waveEditId: null, drawMode: false, drawPath: null });
+    if (!e.shiftKey && this.state.selectedIds.length) this.setState({ selectedIds: [], waveEditId: null, drawMode: false, drawPath: null, toolbarMenu: null });
   }
   onBlockDown(e, id) {
     if (e.button === 1 || (e.button === 0 && this._space)) return; // let bg pan
@@ -709,7 +710,7 @@ export default class App extends React.Component {
     let sel = this.state.selectedIds.slice();
     if (e.shiftKey) sel = sel.includes(id) ? sel.filter(x => x !== id) : [...sel, id];
     else if (!sel.includes(id)) sel = [id];
-    this.setState(s => ({ selectedIds: sel, waveEditId: (s.waveEditId != null && s.waveEditId !== id) ? null : s.waveEditId }));
+    this.setState(s => ({ selectedIds: sel, waveEditId: (s.waveEditId != null && s.waveEditId !== id) ? null : s.waveEditId, toolbarMenu: null }));
     const origins = {};
     this.state.blocks.forEach(b => { if (sel.includes(b.id)) origins[b.id] = { x: b.x, y: b.y }; });
     this._act = { type: 'maybe-drag', origins, sx: e.clientX, sy: e.clientY, moved: false, preSnap: this.snap() };
@@ -786,10 +787,18 @@ export default class App extends React.Component {
   toggleWaveEdit() {
     const id = this.state.selectedIds.length === 1 ? this.state.selectedIds[0] : null;
     if (id == null) return;
-    this.setState(s => ({ waveEditId: s.waveEditId === id ? null : id, drawMode: false, editingId: null, activeSheet: null }));
+    this.setState(s => ({ waveEditId: s.waveEditId === id ? null : id, drawMode: false, editingId: null, activeSheet: null, toolbarMenu: null }));
   }
   togglePencil() {
-    this.setState(s => ({ drawMode: !s.drawMode, drawPath: null, waveEditId: null, editingId: null, activeSheet: null }));
+    this.setState(s => ({
+      drawMode: !s.drawMode,
+      drawPath: null,
+      waveEditId: null,
+      editingId: null,
+      activeSheet: null,
+      toolbarMenu: null,
+      selectedIds: !s.drawMode ? [] : s.selectedIds
+    }));
   }
   setToneOverride(blockId, gi, tone) {
     this.pushHistory();
@@ -1501,7 +1510,7 @@ Respond with ONLY a JSON object:
     if (mod && (e.key === '=' || e.key === '+')) { e.preventDefault(); this.zoomBy(1.2, window.innerWidth / 2, window.innerHeight / 2); return; }
     if (mod && (e.key === '-' || e.key === '_')) { e.preventDefault(); this.zoomBy(1 / 1.2, window.innerWidth / 2, window.innerHeight / 2); return; }
     if ((e.key === 'Backspace' || e.key === 'Delete') && selectedIds.length) { e.preventDefault(); this.del(); return; }
-    if (e.key === 'Escape') { if (selectedIds.length) this.setState({ selectedIds: [] }); return; }
+    if (e.key === 'Escape') { if (this.state.toolbarMenu) { this.setState({ toolbarMenu: null }); return; } if (selectedIds.length) this.setState({ selectedIds: [] }); return; }
     if (e.key === 'Enter' && selectedIds.length === 1) { e.preventDefault(); this.startEdit(selectedIds[0]); }
   }
   onKeyUp(e) { if (e.key === ' ' && this._space) { this._space = false; this.forceUpdate(); } }
@@ -1513,12 +1522,12 @@ Respond with ONLY a JSON object:
     this.pushHistory();
     const newIds = [];
     const news = src.map(b => { const id = this._nextId++; newIds.push(id); return { ...b, id, x: b.x + 34, y: b.y + 34 }; });
-    this.setState(s => ({ blocks: [...s.blocks, ...news], selectedIds: newIds }));
+    this.setState(s => ({ blocks: [...s.blocks, ...news], selectedIds: newIds, toolbarMenu: null }));
   }
   del() {
     const sel = this.state.selectedIds; if (!sel.length) return;
     this.pushHistory();
-    this.setState(s => ({ blocks: s.blocks.filter(b => !sel.includes(b.id)), selectedIds: [], editingId: null }));
+    this.setState(s => ({ blocks: s.blocks.filter(b => !sel.includes(b.id)), selectedIds: [], editingId: null, toolbarMenu: null }));
   }
   editText(id, v) {
     if (!this._editDirty) { this._undo.push(this._editPre || this.snap()); if (this._undo.length > 120) this._undo.shift(); this._redo = []; this._editDirty = true; }
@@ -1799,24 +1808,9 @@ Respond with ONLY a JSON object:
           }
         })));
       }
-      // mini toolbar
-      const z = this.state.zoom || 1;
-      children.push(React.createElement('div', {
-        key: 'tb', style: {
-          // counter-scale by 1/zoom so the menu stays a constant screen size,
-          // anchored a constant gap above the block regardless of zoom level.
-          position: 'absolute', left: '50%', bottom: '100%', marginBottom: `${8 / z}px`,
-          transform: `translateX(-50%) scale(${1 / z})`, transformOrigin: 'center bottom',
-          display: 'flex', gap: '2px', padding: '4px', background: TOK.panel,
-          border: `1px solid ${TOK.sep}`, borderRadius: '10px',
-          boxShadow: '0 6px 20px rgba(28,25,23,0.14)', pointerEvents: 'auto', whiteSpace: 'nowrap'
-        },
-        onMouseDown: (e) => e.stopPropagation()
-      },
-        React.createElement('button', { key: 'e', onClick: () => this.startEdit(block.id), style: this.miniBtn() }, 'Edit'),
-        React.createElement('button', { key: 'd', onClick: () => this.duplicate(), style: this.miniBtn() }, 'Duplicate'),
-        React.createElement('button', { key: 'x', onClick: () => this.del(), style: { ...this.miniBtn(), color: '#d23b3b' } }, 'Delete')
-      ));
+      if (!editing && this.state.selectedIds[0] === block.id) {
+        children.push(this.renderTextToolbar(block));
+      }
     }
     // the glyph svg / placeholder
     if (empty && !editing) {
@@ -1877,6 +1871,283 @@ Respond with ONLY a JSON object:
       });
     }
     return React.createElement(React.Fragment, { key: 'f-' + block.id }, blockDiv, editor);
+  }
+
+  renderTextToolbar(block) {
+    const h = React.createElement;
+    const z = this.state.zoom || 1;
+    const one = this.state.selectedIds.length === 1;
+    const menu = this.state.toolbarMenu;
+    const dark = '#1c1c1d';
+    const dark2 = '#2b2b2d';
+    const mutedLine = 'rgba(255,255,255,0.14)';
+    const scale = block.scale || 1;
+    const fontPx = Math.max(8, Math.min(72, Math.round(16 * scale)));
+    const sizePresets = [
+      ['Small', 0.72],
+      ['Medium', 1],
+      ['Large', 1.35],
+      ['Extra large', 1.75],
+      ['Huge', 2.25]
+    ];
+    const nearestSize = sizePresets.reduce((a, b) => Math.abs(b[1] - scale) < Math.abs(a[1] - scale) ? b : a, sizePresets[1]);
+    const fontChoices = [
+      ['Simple', 'noto-sans'],
+      ['Bookish', 'noto-serif'],
+      ['Technical', 'system'],
+      ['Scribbled', 'zhimang']
+    ];
+    const curFont = block.font || this.state.defFont;
+    const curFontChoice = fontChoices.find(f => f[1] === curFont) || fontChoices[0];
+    const toolBtn = (Comp, label, onClick, opts = {}) => {
+      const active = !!opts.active, disabled = !!opts.disabled;
+      const color = disabled ? '#777' : (opts.danger ? '#ff6b6b' : '#fff');
+      const showLabel = !opts.iconOnly;
+      return h('button', {
+        key: label,
+        title: label,
+        'aria-label': label,
+        disabled,
+        onClick: disabled ? undefined : onClick,
+        style: {
+          height: 32,
+          minWidth: showLabel ? 58 : 32,
+          padding: showLabel ? '0 9px' : 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 5,
+          border: 'none',
+          borderRadius: 8,
+          background: active ? dark2 : 'transparent',
+          color,
+          cursor: disabled ? 'default' : 'pointer',
+          fontSize: 12,
+          fontWeight: 650,
+          lineHeight: 1,
+          whiteSpace: 'nowrap'
+        }
+      },
+        h(Comp, { size: 16, color, weight: active ? 'fill' : 'regular' }),
+        showLabel ? h('span', null, label) : null
+      );
+    };
+    const dropdownBtn = (key, label, value, width) => h('button', {
+      key,
+      title: label,
+      'aria-label': label,
+      onClick: () => this.toggleToolbarMenu(key),
+      style: {
+        height: 32,
+        minWidth: width,
+        padding: '0 12px',
+        border: 'none',
+        borderRadius: 8,
+        background: menu === key ? dark2 : 'transparent',
+        color: '#fff',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        fontSize: 13,
+        fontWeight: 600,
+        whiteSpace: 'nowrap'
+      }
+    }, h('span', null, value), h('span', { style: { fontSize: 13, lineHeight: 1, opacity: 0.9 } }, '⌄'));
+    const colorButton = h('button', {
+      key: 'style',
+      title: 'Style',
+      'aria-label': 'Style',
+      onClick: () => this.toggleToolbarMenu('style'),
+      style: {
+        height: 32,
+        minWidth: 44,
+        padding: '0 9px',
+        border: 'none',
+        borderRadius: 8,
+        background: menu === 'style' ? dark2 : 'transparent',
+        color: '#fff',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 7
+      }
+    },
+      h('span', { style: { width: 20, height: 20, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.35)', background: block.color || this.state.defColor, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.24)' } }),
+      h('span', { style: { fontSize: 13, lineHeight: 1, opacity: 0.9 } }, '⌄')
+    );
+    const divider = (key) => h('div', { key, style: { width: 1, height: 42, background: mutedLine, margin: '0 4px' } });
+    const popBase = (key, left, width, children, opts = {}) => menu === key ? h('div', {
+      key: key + '-menu',
+      onMouseDown: (e) => e.stopPropagation(),
+      style: {
+        position: 'absolute',
+        bottom: opts.bottom || 'calc(100% + 10px)',
+        left,
+        width,
+        maxHeight: opts.maxHeight || 'min(360px, calc(100vh - 120px))',
+        overflowY: 'auto',
+        padding: opts.padding == null ? 14 : opts.padding,
+        background: dark,
+        border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: 18,
+        boxShadow: '0 12px 32px rgba(0,0,0,0.24)',
+        color: '#fff',
+        zIndex: 2
+      }
+    }, children) : null;
+    const menuRow = (key, label, active, onClick, style = {}) => h('button', {
+      key,
+      onClick,
+      style: {
+        width: '100%',
+        height: 42,
+        padding: '0 16px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 14,
+        border: 'none',
+        borderRadius: 10,
+        background: 'transparent',
+        color: '#fff',
+        cursor: 'pointer',
+        fontSize: 17,
+        fontWeight: 500,
+        textAlign: 'left',
+        ...style
+      }
+    }, h('span', { style: { width: 18, fontSize: 17 } }, active ? '✓' : ''), h('span', null, label));
+    const fontMenu = popBase('font', 64, 220, fontChoices.map(([label, id]) =>
+      menuRow(id, label, curFont === id, () => { this.applyStyle({ font: id }); this.closeToolbarMenu(); }, { fontFamily: this.fontStack(id, this.state.script) })
+    ));
+    const sizeMenu = popBase('size', 170, 250, [
+      ...sizePresets.map(([label, val]) => menuRow(label, label, nearestSize[0] === label, () => { this.applyScaleSelected(val); this.closeToolbarMenu(); })),
+      h('div', { key: 'sep', style: { height: 1, background: mutedLine, margin: '12px -14px 14px' } }),
+      h('input', {
+        key: 'custom',
+        type: 'number',
+        min: 8,
+        max: 72,
+        value: fontPx,
+        onChange: (e) => {
+          const n = Math.max(8, Math.min(72, parseInt(e.target.value || '16', 10) || 16));
+          this.applyScaleSelected(n / 16);
+        },
+        style: {
+          width: '100%',
+          height: 40,
+          boxSizing: 'border-box',
+          padding: '0 12px',
+          border: '2px solid #8b5cf6',
+          borderRadius: 9,
+          outline: 'none',
+          background: '#3a3a3b',
+          color: '#fff',
+          fontSize: 17,
+          fontWeight: 500
+        }
+      })
+    ]);
+    const toneOpts = [
+      ['hanzi', TextT, 'Characters'],
+      ['hanziSegments', HanziSegmentIcon, 'Hanzi + wave'],
+      ['segmentsOnly', ToneSegmentsIcon, 'Wave only']
+    ];
+    const toneMenu = popBase('tone', 300, 230, toneOpts.map(([val, Comp, label]) =>
+      menuRow(val, label, this.state.canvasMode === val, () => this.setCanvasMode(val), { fontSize: 15 })
+    ));
+    const styleMenu = popBase('style', 0, 316, [
+      h('div', { key: 'colors', style: { display: 'grid', gridTemplateColumns: 'repeat(6, 34px)', gap: 10, marginBottom: 16 } },
+        [...COLOR_CHIPS, '#6b7280', '#d1d5db'].map(col => h('button', {
+          key: col,
+          title: col,
+          'aria-label': col,
+          onClick: () => this.applyStyle({ color: col }),
+          style: {
+            width: 34,
+            height: 34,
+            borderRadius: '50%',
+            border: (block.color || this.state.defColor).toLowerCase() === col.toLowerCase() ? '3px solid #8b5cf6' : '2px solid rgba(255,255,255,0.25)',
+            background: col,
+            cursor: 'pointer'
+          }
+        }))
+      ),
+      h('div', { key: 'weight', style: { display: 'flex', alignItems: 'center', gap: 10 } },
+        h('span', { style: { fontSize: 13, color: 'rgba(255,255,255,0.74)', width: 44 } }, 'Weight'),
+        h('input', {
+          type: 'range',
+          min: 100,
+          max: 900,
+          step: 10,
+          value: block.weight != null ? block.weight : this.state.defWeight,
+          onInput: (e) => this.applyStyle({ weight: parseInt(e.target.value, 10) || 700 }),
+          onChange: (e) => this.applyStyle({ weight: parseInt(e.target.value, 10) || 700 }),
+          style: { flex: 1, accentColor: '#8b5cf6' }
+        })
+      ),
+      h('div', { key: 'script', style: { display: 'flex', gap: 8, marginTop: 14 } },
+        ['simplified', 'traditional'].map(val => h('button', {
+          key: val,
+          onClick: () => this.setState({ script: val }),
+          style: {
+            flex: 1,
+            height: 34,
+            border: 'none',
+            borderRadius: 9,
+            background: this.state.script === val ? '#8b5cf6' : dark2,
+            color: '#fff',
+            cursor: 'pointer',
+            fontWeight: 700
+          }
+        }, val === 'simplified' ? '简' : '繁'))
+      )
+    ]);
+    const moreMenu = popBase('more', 426, 190, [
+      menuRow('frames', 'Tone frames', this.state.showFrames, () => this.setState(s => ({ showFrames: !s.showFrames, toolbarMenu: null })), { fontSize: 15 }),
+      menuRow('joints', 'Edge joints', this.state.showEdgeJoints, () => this.setState(s => ({ showEdgeJoints: !s.showEdgeJoints, toolbarMenu: null })), { fontSize: 15 }),
+      menuRow('reset', 'Auto width', false, () => { this.resetWidth(block.id); this.closeToolbarMenu(); }, { fontSize: 15 })
+    ]);
+    const bar = h('div', {
+      key: 'size',
+      style: {
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 0
+      }
+    }, colorButton, divider('d0'), dropdownBtn('font', 'Font style', 'Aa', 82), divider('d1'), dropdownBtn('size', 'Text size', nearestSize[0], 164), divider('d2'),
+      toolBtn(ToneWaveIcon, 'Tone', () => this.toggleToolbarMenu('tone'), { active: menu === 'tone' }),
+      toolBtn(PenNib, 'Wave', () => this.toggleWaveEdit(), { disabled: !one, active: this.state.waveEditId === block.id }),
+      toolBtn(DotsThree, 'More', () => this.toggleToolbarMenu('more'), { iconOnly: true, active: menu === 'more' }),
+      divider('d3'),
+      toolBtn(CopySimple, 'Duplicate', () => this.duplicate(), { iconOnly: true }),
+      toolBtn(Trash, 'Delete', () => this.del(), { iconOnly: true, danger: true }),
+      styleMenu, fontMenu, sizeMenu, toneMenu, moreMenu);
+    return h('div', {
+      key: 'tb',
+      onMouseDown: (e) => e.stopPropagation(),
+      style: {
+        position: 'absolute',
+        left: '50%',
+        bottom: '100%',
+        marginBottom: `${8 / z}px`,
+        transform: `translateX(-50%) scale(${1 / z})`,
+        transformOrigin: 'center bottom',
+        display: 'flex',
+        alignItems: 'center',
+        maxWidth: 'min(94vw, 760px)',
+        padding: 4,
+        background: dark,
+        border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: 18,
+        boxShadow: '0 14px 38px rgba(0,0,0,0.22)',
+        pointerEvents: 'auto',
+        whiteSpace: 'nowrap',
+        color: '#fff'
+      }
+    }, bar);
   }
 
   // SVG overlay of draggable control/end handles for Wave Edit, aligned to the block
@@ -2011,11 +2282,13 @@ Respond with ONLY a JSON object:
   }
 
   /* ---- mobile chrome: sheets, tone modes, motion, tap-to-add ---- */
-  openSheet(name) { this.setState({ activeSheet: name }); }
+  openSheet(name) { this.setState({ activeSheet: name, toolbarMenu: null }); }
   closeSheet() { if (this.state.recording) this.stopDictation(); this.setState({ activeSheet: null }); }
-  setCanvasMode(m) { this.setState({ canvasMode: m }); }
+  toggleToolbarMenu(name) { this.setState(s => ({ toolbarMenu: s.toolbarMenu === name ? null : name, activeSheet: null })); }
+  closeToolbarMenu() { if (this.state.toolbarMenu) this.setState({ toolbarMenu: null }); }
+  setCanvasMode(m) { this.setState({ canvasMode: m, toolbarMenu: null }); }
   toggleEdgeJoints() { this.setState(s => ({ showEdgeJoints: !s.showEdgeJoints })); }
-  resetCanvas() { this.pushHistory(); this.setState({ blocks: [], selectedIds: [], drawGuides: [], editingId: null, activeSheet: null }); }
+  resetCanvas() { this.pushHistory(); this.setState({ blocks: [], selectedIds: [], drawGuides: [], editingId: null, activeSheet: null, toolbarMenu: null }); }
   flash(msg) { this.setState({ toast: msg }); clearTimeout(this._toastT); this._toastT = setTimeout(() => this.setState({ toast: '' }), 1800); }
   share() { this.flash('Export coming soon'); }
   playMotion() {
@@ -2044,7 +2317,7 @@ Respond with ONLY a JSON object:
   insertDictation() { this.stopDictation(); this.setState({ activeSheet: null }); }
   cancelDictation() {
     const id = this._recBlockId; this.stopDictation();
-    this.setState(s => ({ blocks: s.blocks.filter(b => b.id !== id), selectedIds: s.selectedIds.filter(x => x !== id), activeSheet: null }));
+    this.setState(s => ({ blocks: s.blocks.filter(b => b.id !== id), selectedIds: s.selectedIds.filter(x => x !== id), activeSheet: null, toolbarMenu: null }));
   }
 
   renderVals() {
@@ -2205,7 +2478,6 @@ Respond with ONLY a JSON object:
     const v = this.renderVals();
     const h = React.createElement;
     const st = this.state;
-    const hasSel = st.selectedIds.length > 0;
 
     // -- small building blocks -------------------------------------------------
     const iconBtn = (Comp, label, onClick, opts = {}) => {
@@ -2235,7 +2507,7 @@ Respond with ONLY a JSON object:
     const topBar = h('div', {
       style: { position: 'absolute', top: 0, left: 0, right: 0, paddingTop: 'env(safe-area-inset-top)', display: 'flex', justifyContent: 'center', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
     },
-      h('div', { style: { pointerEvents: 'auto', width: 'calc(100% - 16px)', maxWidth: 680, marginTop: 8, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 6px 0 10px', background: TOK.surface, backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: `1px solid ${TOK.sep}`, borderRadius: R.xl, boxShadow: '0 1px 2px rgba(28,25,23,0.04),0 6px 22px rgba(28,25,23,0.06)' } },
+      h('div', { style: { pointerEvents: 'auto', width: 'calc(100% - 16px)', maxWidth: 680, marginTop: 8, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 6px 0 10px', background: TOK.surface, border: `1px solid ${TOK.sep}`, borderRadius: R.xl, boxShadow: '0 1px 2px rgba(28,25,23,0.04),0 6px 22px rgba(28,25,23,0.06)' } },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 9 } },
           h('div', { style: { width: 26, height: 26, borderRadius: R.sm, background: TOK.ink, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Noto Sans SC',sans-serif", fontWeight: 800, fontSize: 15, lineHeight: 1 } }, '聲'),
           h('span', { style: { fontSize: 14.5, fontWeight: 600, letterSpacing: '-0.01em', color: TOK.ink } }, 'Tone Canvas')
@@ -2249,17 +2521,14 @@ Respond with ONLY a JSON object:
       )
     );
 
-    // -- bottom tool dock (centered, capped width; Motion removed) -------------
+    // -- bottom creation dock (selection tools live in the text toolbar) -------
     const dock = h('div', {
       style: { position: 'absolute', left: 0, right: 0, bottom: 'calc(env(safe-area-inset-bottom) + 10px)', display: 'flex', justifyContent: 'center', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
     },
-      h('div', { style: { pointerEvents: 'auto', width: 'calc(100% - 24px)', maxWidth: 540, display: 'flex', padding: 6, background: TOK.surface, backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: `1px solid ${TOK.sep}`, borderRadius: 18, boxShadow: '0 1px 2px rgba(28,25,23,0.04),0 10px 30px rgba(28,25,23,0.08)' } },
+      h('div', { style: { pointerEvents: 'auto', width: 'calc(100% - 24px)', maxWidth: 330, display: 'flex', padding: 6, background: TOK.surface, border: `1px solid ${TOK.sep}`, borderRadius: 18, boxShadow: '0 1px 2px rgba(28,25,23,0.04),0 10px 30px rgba(28,25,23,0.08)' } },
         dockItem(TextT, 'Text', () => this.addTextBlock()),
         dockItem(Microphone, 'Dictate', () => this.dictateTap(), { active: st.recording || st.activeSheet === 'dictation' }),
-        dockItem(ToneWaveIcon, 'Tone', () => this.openSheet('tone'), { disabled: !hasSel, active: st.activeSheet === 'tone' }),
-        dockItem(PenNib, 'Wave', () => this.toggleWaveEdit(), { disabled: st.selectedIds.length !== 1, active: st.waveEditId != null }),
-        dockItem(PencilSimple, 'Draw', () => this.togglePencil(), { active: st.drawMode }),
-        dockItem(SlidersHorizontal, 'Style', () => this.openSheet('style'), { disabled: !hasSel, active: st.activeSheet === 'style' })
+        dockItem(PencilSimple, 'Draw', () => this.togglePencil(), { active: st.drawMode })
       )
     );
 
@@ -2277,7 +2546,7 @@ Respond with ONLY a JSON object:
 
     // -- bottom sheet shell (centered, capped width) ---------------------------
     const sheet = (title, body, onClose) => h('div', { key: 'sheet', style: { position: 'fixed', inset: 0, zIndex: 80, display: 'flex', justifyContent: 'center', alignItems: 'flex-end' } },
-      h('div', { onClick: onClose, style: { position: 'absolute', inset: 0, background: 'rgba(28,25,23,0.28)', backdropFilter: 'blur(1px)' } }),
+      h('div', { onClick: onClose, style: { position: 'absolute', inset: 0, background: 'rgba(28,25,23,0.18)' } }),
       h('div', { style: { position: 'relative', width: '100%', maxWidth: 460, maxHeight: '82vh', overflowY: 'auto', background: TOK.panel, border: `1px solid ${TOK.sep}`, borderBottom: 'none', borderRadius: `${R.sheet}px ${R.sheet}px 0 0`, boxShadow: '0 -8px 40px rgba(28,25,23,0.16)', padding: '8px 18px calc(20px + env(safe-area-inset-bottom))' } },
         h('div', { style: { width: 36, height: 5, borderRadius: 3, background: TOK.sep, margin: '0 auto 12px' } }),
         h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 } },
