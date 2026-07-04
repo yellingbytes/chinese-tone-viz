@@ -10,29 +10,39 @@ import * as OpenCCImport from 'opencc-js';
 import { Capacitor } from '@capacitor/core';
 import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import {
-  ArrowCounterClockwise, ArrowClockwise, ShareFat, DotsThree,
+  ArrowCounterClockwise, ArrowClockwise, DotsThree,
   TextT, Microphone, SlidersHorizontal, Palette, TextAa,
-  X, Check, Pause, Waveform, Info, Trash, PenNib, Sparkle, Key, Scribble, PencilSimple, CopySimple,
+  X, Check, Pause, Waveform, Info, Trash, PenNib, Sparkle, Key, Copy, PencilSimple,
 } from '@phosphor-icons/react';
 import { ToneWaveIcon, HanziSegmentIcon, ToneSegmentsIcon, ToneFrameIcon, EdgeJointsIcon } from './ToneIcons';
 
-// shared design tokens — shadcn/Tailwind "stone" palette (warm neutral) to match
-// the cream canvas, with a single blue accent for selection/active states.
+// Crafted Tone Instrument — rice paper, deep ink, cobalt geometry, vermilion live state.
 const TOK = {
-  canvas: '#f3f1ec',                  // warm art surface
-  ink: '#1c1917',                     // stone-900 — primary text/icon
-  inkSoft: '#78716c',                 // stone-500 — secondary
-  inkDim: '#a8a29e',                  // stone-400 — disabled
-  accent: '#2563eb',                  // blue-600 — selection / active
-  accentSoft: 'rgba(37,99,235,0.08)',
-  rec: '#ef4444',                     // red-500 — listening dot only
-  surface: 'rgba(255,255,255,0.88)',  // floating bars
-  panel: '#ffffff',                   // sheets
-  sep: '#e7e5e4',                     // stone-200 — borders
-  sepSoft: 'rgba(28,25,23,0.06)',
+  canvas: '#f6f1e7',
+  canvasDeep: '#ece4d5',
+  paper: '#fbf8f1',
+  ink: '#15130f',
+  inkSoft: '#706a5b',
+  inkDim: '#aaa293',
+  cobalt: '#2457d6',
+  cobaltDeep: '#183f9f',
+  cobaltSoft: 'rgba(36,87,214,0.10)',
+  vermilion: '#d9472f',
+  vermilionSoft: 'rgba(217,71,47,0.12)',
+  surface: 'rgba(255,252,244,0.78)',
+  surfaceStrong: 'rgba(255,252,244,0.92)',
+  panel: '#fffaf1',
+  sep: 'rgba(46,39,27,0.12)',
+  sepSoft: 'rgba(46,39,27,0.065)',
+  hairline: 'rgba(46,39,27,0.10)',
+  shadow: '0 10px 34px rgba(57,43,24,0.10), 0 1px 2px rgba(57,43,24,0.08)',
+  shadowSoft: '0 5px 18px rgba(57,43,24,0.08), 0 1px 1px rgba(57,43,24,0.06)',
 };
+TOK.accent = TOK.cobalt;
+TOK.accentSoft = TOK.cobaltSoft;
+TOK.rec = TOK.vermilion;
 // radius scale (px)
-const R = { sm: 8, md: 10, lg: 12, xl: 14, pill: 999, sheet: 16 };
+const R = { sm: 9, md: 12, lg: 15, xl: 18, pill: 999, sheet: 22 };
 const COLOR_CHIPS = ['#1c1917', '#ef4444', '#f97316', '#eab308', '#22c55e', '#0ea5e9', '#2563eb', '#8b5cf6', '#ec4899', '#ffffff'];
 
 const pinyinPro = { pinyin };
@@ -473,7 +483,7 @@ export default class App extends React.Component {
   }
 
   debugFrame(spec, idBase, M) {
-    const FS = M.FS, blue = '#2f6bff', red = '#ff5a3c';
+    const FS = M.FS, blue = TOK.cobalt, red = TOK.vermilion;
     const dot = (cx, cy, c) => React.createElement('circle', { key: idBase + c + cx + cy, cx, cy, r: 4.5, fill: '#fff', stroke: c, strokeWidth: 2 });
     const els = [];
     if (spec.kind === 'fold') {
@@ -509,24 +519,19 @@ export default class App extends React.Component {
     const motion = this.state.motionPlaying;
     const facesOpacity = motion ? 0.08 : (segOnly ? 0 : 1);
 
-    const defs = [], faces = [], segs = [], joints = [], frames = [];
+    const defs = [], faces = [], joints = [], frames = [];
     specs.forEach(s => {
       const id = `g-${block.id}-${s.line}-${s.key}`;
       if (!segOnly) {
         if (s.kind === 'fold') this.foldClips(s, id, MB).forEach(d => defs.push(d));
         faces.push(this.glyphFace(s, faceFill, 1, null, MB, id + '-f', id));
       }
-      if (showSeg || motion) {
-        // Hybrid (Hanzi + Segments): draw the editable tone guide above the glyphs
-        // so it stays easy to grab without covering character centers.
-        const segColor = TOK.ink;
-        const segOp = segOnly ? 0.95 : 0.9;
-        const segW = segOnly ? 0.05 : 0.09;
-        segs.push(this.segmentLine(s, segColor, segOp, segW, id + '-s', MB, segOnly ? 0 : this.toneGuideYOffset(MB)));
-      }
       if (this.state.showEdgeJoints) joints.push(this.jointDot(s, faceFill, id + '-j', MB));
       if (this.state.showFrames) this.debugFrame(s, id, MB).forEach(f => frames.push(f));
     });
+    const segs = (showSeg || motion)
+      ? this.toneWaveLines(specs, TOK.ink, segOnly ? 0.95 : 0.9, segOnly ? 0.05 : 0.09, `seg-${block.id}`, MB, segOnly ? 0 : this.toneGuideYOffset(MB))
+      : [];
     // auto-morph: soften the glyphs while searching, sharpen the new ones in
     const xf = this.state.waveXform;
     let facesStyle = { opacity: facesOpacity, transition: `opacity ${0.7 / (this.state.motionSpeed || 1)}s cubic-bezier(0.22,0.61,0.36,1)` };
@@ -547,9 +552,50 @@ export default class App extends React.Component {
     );
   }
 
-  // a single clean tone-segment line for a spec (the connecting wave)
+  // continuous tone-wave strokes, one unbroken polyline per visual line
   toneGuideYOffset(M) { return -(M.FS / 2 + 8); }
   pointWithGuideOffset(p, offsetY) { return { x: p.x, y: p.y + (offsetY || 0) }; }
+  specTonePoints(spec, offsetY = 0) {
+    const pts = [{ x: spec.sx, y: spec.sy + offsetY }];
+    if (spec.kind === 'fold') {
+      pts.push({ x: spec.sx + spec.adv / 2, y: spec.sy + spec.dip + offsetY });
+      pts.push({ x: spec.sx + spec.adv, y: spec.sy + offsetY });
+    } else {
+      pts.push({ x: spec.sx + spec.adv, y: spec.sy + (spec.dy || 0) + offsetY });
+    }
+    return pts;
+  }
+  toneWaveLines(specs, color, opacity, widthMul, key, M, offsetY = 0, opts = {}) {
+    const h = React.createElement;
+    const w = M.FS * (widthMul || 0.05);
+    const byLine = new Map();
+    (specs || []).forEach(s => {
+      if (s.punct && opts.skipPunct) return;
+      const line = s.line || 0;
+      if (!byLine.has(line)) byLine.set(line, []);
+      byLine.get(line).push(s);
+    });
+    return Array.from(byLine.entries()).map(([line, lineSpecs]) => {
+      const pts = [];
+      lineSpecs.sort((a, b) => a.sx - b.sx).forEach((s, idx) => {
+        const sp = this.specTonePoints(s, offsetY);
+        if (idx === 0) pts.push(...sp);
+        else pts.push(...sp);
+      });
+      return h('polyline', {
+        key: `${key}-${line}`,
+        points: pts.map(p => `${p.x},${p.y}`).join(' '),
+        fill: 'none',
+        stroke: color,
+        strokeOpacity: opacity,
+        strokeWidth: w,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round'
+      });
+    });
+  }
+
+  // a single clean tone-segment line for a spec (debug / fallback)
   segmentLine(spec, color, opacity, widthMul, key, M, offsetY = 0) {
     const w = M.FS * (widthMul || 0.05);
     if (spec.kind === 'fold') {
@@ -1378,7 +1424,7 @@ Respond with ONLY a JSON object:
           return;   // keep drawMode on so they can try again
         }
         const normalized = this.normalizeDrawPath(path);
-        if (!normalized || !normalized.tones || !normalized.tones.length) { this.flash('画长一点的声调线 · draw a longer tone line'); return; }
+        if (!normalized || !normalized.tones || !normalized.tones.length) { this.flash('画长一点的声调线'); return; }
         const guide = { id: this._nextGuideId++, points: normalized.points, tones: normalized.tones };
         this.pushSnapshot(a.preSnap);
         this.setState(s => ({ drawGuides: [...(s.drawGuides || []), guide] }));
@@ -1769,8 +1815,9 @@ Respond with ONLY a JSON object:
     if (selected) {
       children.push(React.createElement('div', {
         key: 'sel', style: {
-          position: 'absolute', inset: '-2px', border: '1.5px solid #2f6bff',
-          borderRadius: '3px', pointerEvents: 'none', boxShadow: '0 0 0 4px rgba(47,107,255,0.08)'
+          position: 'absolute', inset: '-3px', border: `${1.25 / (this.state.zoom || 1)}px solid ${TOK.cobalt}`,
+          borderRadius: `${7 / (this.state.zoom || 1)}px`, pointerEvents: 'none',
+          boxShadow: `0 0 0 ${4 / (this.state.zoom || 1)}px rgba(36,87,214,0.07), inset 0 0 0 ${1 / (this.state.zoom || 1)}px rgba(255,255,255,0.55)`
         }
       }));
       ['-7px -7px', '-7px auto auto calc(100% - 7px)'].forEach(() => {});
@@ -1781,7 +1828,20 @@ Respond with ONLY a JSON object:
         onMouseDown: (e) => this.onScaleDown(e, block.id),
         onTouchStart: (e) => this.onScaleDown(e, block.id),
         title: 'Drag to resize',
-        style: { position: 'absolute', width: `${14 / zc}px`, height: `${14 / zc}px`, background: '#fff', border: `${1.5 / zc}px solid ${TOK.accent}`, borderRadius: `${3 / zc}px`, cursor: cur, pointerEvents: 'auto', touchAction: 'none', zIndex: 24, ...s }
+        style: {
+          position: 'absolute',
+          width: `${13 / zc}px`,
+          height: `${13 / zc}px`,
+          background: TOK.paper,
+          border: `${1.4 / zc}px solid ${TOK.cobalt}`,
+          borderRadius: `${5 / zc}px`,
+          cursor: cur,
+          pointerEvents: 'auto',
+          touchAction: 'none',
+          zIndex: 24,
+          boxShadow: `0 ${1 / zc}px ${4 / zc}px rgba(57,43,24,0.22)`,
+          ...s
+        }
       });
       const off = `${-7 / zc}px`;
       children.push(corner({ left: off, top: off }, 'nwse-resize'));
@@ -1803,8 +1863,8 @@ Respond with ONLY a JSON object:
           }
         }, React.createElement('div', {
           key: 'grip', style: {
-            width: '5px', height: '34px', maxHeight: '70%', background: '#2f6bff',
-            borderRadius: '3px', boxShadow: '0 1px 3px rgba(20,18,12,0.30)'
+            width: `${4 / zc}px`, height: `${34 / zc}px`, maxHeight: '70%', background: TOK.cobalt,
+            borderRadius: `${4 / zc}px`, boxShadow: `0 ${1 / zc}px ${5 / zc}px rgba(24,63,159,0.24)`
           }
         })));
       }
@@ -1815,8 +1875,8 @@ Respond with ONLY a JSON object:
     // the glyph svg / placeholder
     if (empty && !editing) {
       children.push(React.createElement('div', {
-        key: 'ph', style: { padding: '14px 20px', color: '#a8a395', fontSize: '15px', fontWeight: 500, fontStyle: 'italic', whiteSpace: 'nowrap' }
-      }, '输入中文… type or paste'));
+        key: 'ph', style: { padding: '14px 20px', color: TOK.inkDim, fontSize: '15px', fontWeight: 500, letterSpacing: 0, whiteSpace: 'nowrap' }
+      }, '输入中文'));
     } else {
       children.push(React.createElement('div', { key: 'svg', style: { position: 'absolute', left: 0, top: 0 } }, this.renderBlockSvg(block, M)));
     }
@@ -1862,9 +1922,10 @@ Respond with ONLY a JSON object:
           top: (top + bbox.h + 12) + 'px',
           minWidth: '280px', width: taW + 'px', height: '52px',
           padding: '10px 13px', fontSize: '17px', fontWeight: 500, lineHeight: 1.3,
-          color: '#17150f', background: 'rgba(255,255,255,0.97)', resize: 'none',
-          border: '1.5px solid #2f6bff', borderRadius: '10px', outline: 'none',
-          boxShadow: '0 10px 30px rgba(47,107,255,0.18)', zIndex: 30,
+          color: TOK.ink, background: TOK.surfaceStrong, resize: 'none',
+          border: `1.5px solid ${TOK.cobalt}`, borderRadius: R.md, outline: 'none',
+          boxShadow: '0 12px 32px rgba(36,87,214,0.14), 0 1px 2px rgba(57,43,24,0.08)', zIndex: 30,
+          backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)',
           pointerEvents: 'auto', userSelect: 'text', WebkitUserSelect: 'text',
           fontFamily: this.fontStack(block.font || this.state.defFont, this.state.script)
         }
@@ -1878,9 +1939,9 @@ Respond with ONLY a JSON object:
     const z = this.state.zoom || 1;
     const one = this.state.selectedIds.length === 1;
     const menu = this.state.toolbarMenu;
-    const dark = '#1c1c1d';
-    const dark2 = '#2b2b2d';
-    const mutedLine = 'rgba(255,255,255,0.14)';
+    const dark = TOK.surfaceStrong;
+    const dark2 = 'rgba(46,39,27,0.075)';
+    const mutedLine = TOK.hairline;
     const scale = block.scale || 1;
     const fontPx = Math.max(8, Math.min(72, Math.round(16 * scale)));
     const sizePresets = [
@@ -1891,17 +1952,15 @@ Respond with ONLY a JSON object:
       ['Huge', 2.25]
     ];
     const nearestSize = sizePresets.reduce((a, b) => Math.abs(b[1] - scale) < Math.abs(a[1] - scale) ? b : a, sizePresets[1]);
-    const fontChoices = [
-      ['Simple', 'noto-sans'],
-      ['Bookish', 'noto-serif'],
-      ['Technical', 'system'],
-      ['Scribbled', 'zhimang']
-    ];
+    const fontChoices = App.FONTS;
     const curFont = block.font || this.state.defFont;
-    const curFontChoice = fontChoices.find(f => f[1] === curFont) || fontChoices[0];
+    const customColors = [...COLOR_CHIPS, '#6b7280'];
+    const currentColor = (block.color || this.state.defColor || '#1c1917').toLowerCase();
+    const currentScript = this.state.script === 'traditional' ? '繁' : '简';
+    const controlH = 34;
     const toolBtn = (Comp, label, onClick, opts = {}) => {
       const active = !!opts.active, disabled = !!opts.disabled;
-      const color = disabled ? '#777' : (opts.danger ? '#ff6b6b' : '#fff');
+      const color = disabled ? TOK.inkDim : (opts.danger ? TOK.rec : (active ? TOK.cobaltDeep : TOK.ink));
       const showLabel = !opts.iconOnly;
       return h('button', {
         key: label,
@@ -1910,15 +1969,15 @@ Respond with ONLY a JSON object:
         disabled,
         onClick: disabled ? undefined : onClick,
         style: {
-          height: 32,
-          minWidth: showLabel ? 58 : 32,
-          padding: showLabel ? '0 9px' : 0,
+          height: controlH,
+          minWidth: showLabel ? 54 : controlH,
+          padding: showLabel ? '0 8px' : 0,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           gap: 5,
           border: 'none',
-          borderRadius: 8,
+          borderRadius: 10,
           background: active ? dark2 : 'transparent',
           color,
           cursor: disabled ? 'default' : 'pointer',
@@ -1938,18 +1997,18 @@ Respond with ONLY a JSON object:
       'aria-label': label,
       onClick: () => this.toggleToolbarMenu(key),
       style: {
-        height: 32,
+        height: controlH,
         minWidth: width,
-        padding: '0 12px',
+        padding: '0 10px',
         border: 'none',
-        borderRadius: 8,
+        borderRadius: 10,
         background: menu === key ? dark2 : 'transparent',
-        color: '#fff',
+        color: TOK.ink,
         cursor: 'pointer',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        gap: 12,
+        gap: 10,
         fontSize: 13,
         fontWeight: 600,
         whiteSpace: 'nowrap'
@@ -1961,23 +2020,23 @@ Respond with ONLY a JSON object:
       'aria-label': 'Style',
       onClick: () => this.toggleToolbarMenu('style'),
       style: {
-        height: 32,
-        minWidth: 44,
-        padding: '0 9px',
+        height: controlH,
+        minWidth: 42,
+        padding: '0 8px',
         border: 'none',
-        borderRadius: 8,
+        borderRadius: 10,
         background: menu === 'style' ? dark2 : 'transparent',
-        color: '#fff',
+        color: TOK.ink,
         cursor: 'pointer',
         display: 'flex',
         alignItems: 'center',
         gap: 7
       }
     },
-      h('span', { style: { width: 20, height: 20, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.35)', background: block.color || this.state.defColor, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.24)' } }),
+      h('span', { style: { width: 20, height: 20, borderRadius: '50%', border: '2px solid rgba(46,39,27,0.16)', background: block.color || this.state.defColor, boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.34)' } }),
       h('span', { style: { fontSize: 13, lineHeight: 1, opacity: 0.9 } }, '⌄')
     );
-    const divider = (key) => h('div', { key, style: { width: 1, height: 42, background: mutedLine, margin: '0 4px' } });
+    const divider = (key) => h('div', { key, style: { width: 1, height: 30, background: mutedLine, margin: '0 3px', flex: '0 0 auto' } });
     const popBase = (key, left, width, children, opts = {}) => menu === key ? h('div', {
       key: key + '-menu',
       onMouseDown: (e) => e.stopPropagation(),
@@ -1989,11 +2048,13 @@ Respond with ONLY a JSON object:
         maxHeight: opts.maxHeight || 'min(360px, calc(100vh - 120px))',
         overflowY: 'auto',
         padding: opts.padding == null ? 14 : opts.padding,
-        background: dark,
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: TOK.surfaceStrong,
+        border: `1px solid ${TOK.hairline}`,
         borderRadius: 18,
-        boxShadow: '0 12px 32px rgba(0,0,0,0.24)',
-        color: '#fff',
+        boxShadow: TOK.shadow,
+        color: TOK.ink,
+        backdropFilter: 'blur(22px) saturate(1.18)',
+        WebkitBackdropFilter: 'blur(22px) saturate(1.18)',
         zIndex: 2
       }
     }, children) : null;
@@ -2010,44 +2071,60 @@ Respond with ONLY a JSON object:
         border: 'none',
         borderRadius: 10,
         background: 'transparent',
-        color: '#fff',
+        color: TOK.ink,
         cursor: 'pointer',
         fontSize: 17,
         fontWeight: 500,
         textAlign: 'left',
         ...style
       }
-    }, h('span', { style: { width: 18, fontSize: 17 } }, active ? '✓' : ''), h('span', null, label));
-    const fontMenu = popBase('font', 64, 220, fontChoices.map(([label, id]) =>
-      menuRow(id, label, curFont === id, () => { this.applyStyle({ font: id }); this.closeToolbarMenu(); }, { fontFamily: this.fontStack(id, this.state.script) })
-    ));
+    }, h('span', { style: { width: 18, fontSize: 17, color: active ? TOK.cobalt : TOK.inkDim } }, active ? '✓' : ''), h('span', null, label));
+    const fontMenu = popBase('font', 64, 278, fontChoices.map(f =>
+      menuRow(f.id, f.label, curFont === f.id, () => { this.applyStyle({ font: f.id }); this.closeToolbarMenu(); }, {
+        fontFamily: this.fontStack(f.id, this.state.script),
+        fontSize: 14.5,
+        fontWeight: 600
+      })
+    ), { maxHeight: 'min(392px, calc(100vh - 120px))' });
     const sizeMenu = popBase('size', 170, 250, [
       ...sizePresets.map(([label, val]) => menuRow(label, label, nearestSize[0] === label, () => { this.applyScaleSelected(val); this.closeToolbarMenu(); })),
       h('div', { key: 'sep', style: { height: 1, background: mutedLine, margin: '12px -14px 14px' } }),
-      h('input', {
-        key: 'custom',
-        type: 'number',
-        min: 8,
-        max: 72,
-        value: fontPx,
-        onChange: (e) => {
-          const n = Math.max(8, Math.min(72, parseInt(e.target.value || '16', 10) || 16));
-          this.applyScaleSelected(n / 16);
-        },
-        style: {
-          width: '100%',
-          height: 40,
-          boxSizing: 'border-box',
-          padding: '0 12px',
-          border: '2px solid #8b5cf6',
-          borderRadius: 9,
-          outline: 'none',
-          background: '#3a3a3b',
-          color: '#fff',
-          fontSize: 17,
-          fontWeight: 500
-        }
-      })
+      h('label', { key: 'custom-wrap', style: { display: 'grid', gap: 8, color: TOK.inkSoft, fontSize: 12, fontWeight: 700 } },
+        h('span', null, 'Font size'),
+        h('div', { style: { position: 'relative' } },
+          h('input', {
+            key: 'custom',
+            type: 'number',
+            inputMode: 'numeric',
+            min: 8,
+            max: 72,
+            value: fontPx,
+            'aria-label': 'Custom font size',
+            onInput: (e) => {
+              const n = Math.max(8, Math.min(72, parseInt(e.target.value || '16', 10) || 16));
+              this.applyScaleSelected(n / 16);
+            },
+            onChange: (e) => {
+              const n = Math.max(8, Math.min(72, parseInt(e.target.value || '16', 10) || 16));
+              this.applyScaleSelected(n / 16);
+            },
+            style: {
+              width: '100%',
+              height: 40,
+              boxSizing: 'border-box',
+              padding: '0 42px 0 12px',
+              border: `2px solid ${TOK.cobalt}`,
+              borderRadius: 9,
+              outline: 'none',
+              background: TOK.paper,
+              color: TOK.ink,
+              fontSize: 17,
+              fontWeight: 500
+            }
+          }),
+          h('span', { style: { position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: TOK.inkDim, fontSize: 12, pointerEvents: 'none' } }, 'px')
+        )
+      )
     ]);
     const toneOpts = [
       ['hanzi', TextT, 'Characters'],
@@ -2059,7 +2136,7 @@ Respond with ONLY a JSON object:
     ));
     const styleMenu = popBase('style', 0, 316, [
       h('div', { key: 'colors', style: { display: 'grid', gridTemplateColumns: 'repeat(6, 34px)', gap: 10, marginBottom: 16 } },
-        [...COLOR_CHIPS, '#6b7280', '#d1d5db'].map(col => h('button', {
+        customColors.map(col => h('button', {
           key: col,
           title: col,
           'aria-label': col,
@@ -2068,14 +2145,42 @@ Respond with ONLY a JSON object:
             width: 34,
             height: 34,
             borderRadius: '50%',
-            border: (block.color || this.state.defColor).toLowerCase() === col.toLowerCase() ? '3px solid #8b5cf6' : '2px solid rgba(255,255,255,0.25)',
+            border: currentColor === col.toLowerCase() ? `3px solid ${TOK.cobalt}` : '2px solid rgba(46,39,27,0.16)',
             background: col,
             cursor: 'pointer'
           }
-        }))
+        })),
+        h('label', {
+          key: 'custom-color',
+          title: 'Custom color',
+          'aria-label': 'Custom color',
+          style: {
+            position: 'relative',
+            width: 34,
+            height: 34,
+            borderRadius: '50%',
+            border: customColors.includes(currentColor) ? '2px solid rgba(46,39,27,0.16)' : `3px solid ${TOK.cobalt}`,
+            background: 'conic-gradient(#ef4444, #f97316, #eab308, #22c55e, #0ea5e9, #2563eb, #8b5cf6, #ec4899, #ef4444)',
+            boxSizing: 'border-box',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            overflow: 'hidden'
+          }
+        },
+          h(Palette, { size: 15, color: '#fff', weight: 'fill', style: { filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.55))' } }),
+          h('input', {
+            type: 'color',
+            value: block.color || this.state.defColor,
+            onInput: (e) => this.applyStyle({ color: e.target.value }),
+            onChange: (e) => this.applyStyle({ color: e.target.value }),
+            style: { position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }
+          })
+        )
       ),
       h('div', { key: 'weight', style: { display: 'flex', alignItems: 'center', gap: 10 } },
-        h('span', { style: { fontSize: 13, color: 'rgba(255,255,255,0.74)', width: 44 } }, 'Weight'),
+        h('span', { style: { fontSize: 13, color: TOK.inkSoft, width: 44 } }, 'Weight'),
         h('input', {
           type: 'range',
           min: 100,
@@ -2084,49 +2189,49 @@ Respond with ONLY a JSON object:
           value: block.weight != null ? block.weight : this.state.defWeight,
           onInput: (e) => this.applyStyle({ weight: parseInt(e.target.value, 10) || 700 }),
           onChange: (e) => this.applyStyle({ weight: parseInt(e.target.value, 10) || 700 }),
-          style: { flex: 1, accentColor: '#8b5cf6' }
+          style: { flex: 1, accentColor: TOK.cobalt }
         })
-      ),
-      h('div', { key: 'script', style: { display: 'flex', gap: 8, marginTop: 14 } },
-        ['simplified', 'traditional'].map(val => h('button', {
-          key: val,
-          onClick: () => this.setState({ script: val }),
-          style: {
-            flex: 1,
-            height: 34,
-            border: 'none',
-            borderRadius: 9,
-            background: this.state.script === val ? '#8b5cf6' : dark2,
-            color: '#fff',
-            cursor: 'pointer',
-            fontWeight: 700
-          }
-        }, val === 'simplified' ? '简' : '繁'))
       )
     ]);
-    const moreMenu = popBase('more', 426, 190, [
-      menuRow('frames', 'Tone frames', this.state.showFrames, () => this.setState(s => ({ showFrames: !s.showFrames, toolbarMenu: null })), { fontSize: 15 }),
-      menuRow('joints', 'Edge joints', this.state.showEdgeJoints, () => this.setState(s => ({ showEdgeJoints: !s.showEdgeJoints, toolbarMenu: null })), { fontSize: 15 }),
-      menuRow('reset', 'Auto width', false, () => { this.resetWidth(block.id); this.closeToolbarMenu(); }, { fontSize: 15 })
-    ]);
+    const scriptToggle = h('button', {
+      key: 'script-toggle',
+      title: this.state.script === 'traditional' ? 'Traditional Chinese' : 'Simplified Chinese',
+      'aria-label': 'Toggle Simplified and Traditional Chinese',
+      onClick: () => this.setState(s => ({ script: s.script === 'traditional' ? 'simplified' : 'traditional', toolbarMenu: null })),
+      style: {
+        width: controlH,
+        height: controlH,
+        border: 'none',
+        borderRadius: 10,
+        background: dark2,
+        color: TOK.ink,
+        cursor: 'pointer',
+        fontSize: 15,
+        fontWeight: 800,
+        lineHeight: 1
+      }
+    }, currentScript);
     const bar = h('div', {
       key: 'size',
+      className: 'tc-toolbar-row',
       style: {
         position: 'relative',
         display: 'flex',
         alignItems: 'center',
-        gap: 0
+        gap: 4,
+        flexWrap: 'nowrap',
+        minWidth: 0
       }
-    }, colorButton, divider('d0'), dropdownBtn('font', 'Font style', 'Aa', 82), divider('d1'), dropdownBtn('size', 'Text size', nearestSize[0], 164), divider('d2'),
+    }, colorButton, divider('d0'), dropdownBtn('font', 'Font style', 'Aa', 72), divider('d1'), dropdownBtn('size', 'Text size', nearestSize[0], 116), scriptToggle, divider('d2'),
       toolBtn(ToneWaveIcon, 'Tone', () => this.toggleToolbarMenu('tone'), { active: menu === 'tone' }),
       toolBtn(PenNib, 'Wave', () => this.toggleWaveEdit(), { disabled: !one, active: this.state.waveEditId === block.id }),
-      toolBtn(DotsThree, 'More', () => this.toggleToolbarMenu('more'), { iconOnly: true, active: menu === 'more' }),
       divider('d3'),
-      toolBtn(CopySimple, 'Duplicate', () => this.duplicate(), { iconOnly: true }),
+      toolBtn(Copy, 'Duplicate', () => this.duplicate(), { iconOnly: true }),
       toolBtn(Trash, 'Delete', () => this.del(), { iconOnly: true, danger: true }),
-      styleMenu, fontMenu, sizeMenu, toneMenu, moreMenu);
+      styleMenu, fontMenu, sizeMenu, toneMenu);
     return h('div', {
       key: 'tb',
+      className: 'tc-bar',
       onMouseDown: (e) => e.stopPropagation(),
       style: {
         position: 'absolute',
@@ -2137,15 +2242,18 @@ Respond with ONLY a JSON object:
         transformOrigin: 'center bottom',
         display: 'flex',
         alignItems: 'center',
-        maxWidth: 'min(94vw, 760px)',
-        padding: 4,
+        justifyContent: 'center',
+        maxWidth: 'min(94vw, 608px)',
+        padding: 5,
         background: dark,
-        border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: 18,
-        boxShadow: '0 14px 38px rgba(0,0,0,0.22)',
+        border: `1px solid ${TOK.hairline}`,
+        borderRadius: 20,
+        boxShadow: TOK.shadow,
+        backdropFilter: 'blur(22px) saturate(1.18)',
+        WebkitBackdropFilter: 'blur(22px) saturate(1.18)',
         pointerEvents: 'auto',
         whiteSpace: 'nowrap',
-        color: '#fff'
+        color: TOK.ink
       }
     }, bar);
   }
@@ -2159,13 +2267,13 @@ Respond with ONLY a JSON object:
     const els = [];
     const MB = this.scaleMetrics(this.metrics(), block.scale || 1);
     const guideOffsetY = this.toneGuideYOffset(MB);
-    const guideStroke = '#1c1917';
-    const handleStroke = '#78716c';
-    const handleFill = '#ffffff';
-    const endFill = '#44403c';
+    const guideStroke = TOK.ink;
+    const handleStroke = TOK.cobalt;
+    const handleFill = TOK.paper;
+    const endFill = TOK.cobalt;
+    this.toneWaveLines(specs, guideStroke, 0.95, 0.045, `guide-${block.id}`, MB, guideOffsetY).forEach(el => els.push(el));
     specs.forEach(s => {
       if (s.punct) return;
-      els.push(this.segmentLine(s, guideStroke, 0.95, 0.045, 'guide-' + s.gi, MB, guideOffsetY));
       const p0 = { x: s.sx, y: s.sy };
       const end = { x: s.sx + s.adv, y: s.kind === 'fold' ? s.sy : s.sy + (s.dy || 0) };
       const control = s.kind === 'fold' ? { x: s.sx + s.adv / 2, y: s.sy + s.dip } : { x: (p0.x + end.x) / 2, y: (p0.y + end.y) / 2 };
@@ -2175,10 +2283,10 @@ Respond with ONLY a JSON object:
       const dl = (which) => ({ style: { pointerEvents: 'auto', cursor: 'grab', touchAction: 'none' }, onMouseDown: (e) => this.onWaveDown(e, block.id, s, which), onTouchStart: (e) => this.onWaveDown(e, block.id, s, which) });
       // control: transparent hit halo + hollow dot
       els.push(h('circle', { key: 'ch' + s.gi, cx: vControl.x, cy: vControl.y, r: hit, fill: 'transparent', ...dl('control') }));
-      els.push(h('circle', { key: 'c' + s.gi, cx: vControl.x, cy: vControl.y, r: r * 0.72, fill: handleFill, stroke: handleStroke, strokeWidth: sw, style: { pointerEvents: 'none' } }));
+      els.push(h('circle', { key: 'c' + s.gi, cx: vControl.x, cy: vControl.y, r: r * 0.72, fill: handleFill, stroke: handleStroke, strokeWidth: sw, style: { pointerEvents: 'none', filter: 'drop-shadow(0 1px 2px rgba(24,63,159,0.20))' } }));
       // end: transparent hit halo + filled dot
       els.push(h('circle', { key: 'eh' + s.gi, cx: vEnd.x, cy: vEnd.y, r: hit, fill: 'transparent', ...dl('end') }));
-      els.push(h('circle', { key: 'e' + s.gi, cx: vEnd.x, cy: vEnd.y, r, fill: endFill, stroke: handleFill, strokeWidth: sw, style: { pointerEvents: 'none' } }));
+      els.push(h('circle', { key: 'e' + s.gi, cx: vEnd.x, cy: vEnd.y, r, fill: endFill, stroke: handleFill, strokeWidth: sw, style: { pointerEvents: 'none', filter: 'drop-shadow(0 1px 2px rgba(24,63,159,0.24))' } }));
     });
     if (live) {
       const off = live.guideOffsetY != null ? live.guideOffsetY : guideOffsetY;
@@ -2186,7 +2294,7 @@ Respond with ONLY a JSON object:
       const lc = this.pointWithGuideOffset(live.control, off);
       const le = this.pointWithGuideOffset(live.end, off);
       els.push(h('polyline', { key: 'lv', points: `${lp0.x},${lp0.y} ${lc.x},${lc.y} ${le.x},${le.y}`, fill: 'none', stroke: guideStroke, strokeWidth: 3 / z, strokeDasharray: `${7 / z} ${5 / z}`, strokeLinecap: 'round', strokeLinejoin: 'round' }));
-      els.push(h('text', { key: 'lb', x: le.x + 10 / z, y: le.y - 10 / z, fill: guideStroke, fontSize: 15 / z, fontWeight: 700, fontFamily: 'system-ui, sans-serif', style: { userSelect: 'none' } }, '→ ' + this.toneName(live.tone)));
+      els.push(h('text', { key: 'lb', x: le.x + 10 / z, y: le.y - 10 / z, fill: TOK.cobaltDeep, fontSize: 14 / z, fontWeight: 700, fontFamily: 'system-ui, -apple-system, sans-serif', style: { userSelect: 'none' } }, this.toneName(live.tone)));
     }
     return h('svg', { key: 'wave', width: bbox.w, height: bbox.h, viewBox: `${bbox.x} ${bbox.y} ${bbox.w} ${bbox.h}`, style: { position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none', zIndex: 22 } }, els);
   }
@@ -2266,7 +2374,7 @@ Respond with ONLY a JSON object:
         style: { position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none' }
       },
         h('defs', { key: 'd' }, h('linearGradient', { id: gid, x1: '0%', y1: '0%', x2: '100%', y2: '0%' },
-          h('stop', { offset: '0%', stopColor: '#2563eb' }), h('stop', { offset: '50%', stopColor: '#7c3aed' }), h('stop', { offset: '100%', stopColor: '#ef4444' }))),
+          h('stop', { offset: '0%', stopColor: TOK.cobalt }), h('stop', { offset: '72%', stopColor: TOK.cobaltDeep }), h('stop', { offset: '100%', stopColor: TOK.vermilion }))),
         h('polyline', {
           key: 'p',
           points: dp.map(p => { const s = toScreen(p); return s.x.toFixed(1) + ',' + s.y.toFixed(1); }).join(' '),
@@ -2329,9 +2437,14 @@ Respond with ONLY a JSON object:
     const grid = React.createElement('div', {
       key: 'grid', style: {
         position: 'absolute', inset: 0, pointerEvents: 'none',
-        backgroundColor: '#f3f1ec',
-        backgroundImage: 'radial-gradient(rgba(20,18,12,0.10) 1.1px, transparent 1.1px)',
-        backgroundSize: `${cell}px ${cell}px`, backgroundPosition: `${panX}px ${panY}px`
+        backgroundColor: TOK.canvas,
+        backgroundImage: [
+          'radial-gradient(rgba(36,31,22,0.105) 1.05px, transparent 1.05px)',
+          'linear-gradient(110deg, rgba(255,255,255,0.34), rgba(255,255,255,0) 42%, rgba(126,102,66,0.026) 72%, rgba(255,255,255,0))',
+          'linear-gradient(0deg, rgba(70,54,29,0.018), rgba(255,255,255,0.14))'
+        ].join(','),
+        backgroundSize: `${cell}px ${cell}px, 100% 100%, 100% 100%`,
+        backgroundPosition: `${panX}px ${panY}px, 0 0, 0 0`
       }
     });
     const panning = this._act && this._act.type === 'pan';
@@ -2354,7 +2467,8 @@ Respond with ONLY a JSON object:
       key: 'mq', style: {
         position: 'absolute', left: marquee.x + 'px', top: marquee.y + 'px',
         width: marquee.w + 'px', height: marquee.h + 'px', pointerEvents: 'none',
-        border: '1px solid #2f6bff', background: 'rgba(47,107,255,0.08)', zIndex: 25
+        border: `1px solid ${TOK.cobalt}`, background: TOK.cobaltSoft, zIndex: 25,
+        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.35)'
       }
     }) : null;
 
@@ -2444,9 +2558,9 @@ Respond with ONLY a JSON object:
     const framesBtnStyle = {
       display: 'flex', alignItems: 'center', gap: '5px', padding: '7px 11px',
       fontSize: '12.5px', fontWeight: 600, borderRadius: '9px', cursor: 'pointer',
-      color: framesActive ? '#2f6bff' : '#5b5648',
-      background: framesActive ? 'rgba(47,107,255,0.10)' : 'transparent',
-      border: framesActive ? '1px solid rgba(47,107,255,0.30)' : '1px solid transparent'
+      color: framesActive ? TOK.cobalt : TOK.inkSoft,
+      background: framesActive ? TOK.cobaltSoft : 'transparent',
+      border: framesActive ? '1px solid rgba(36,87,214,0.30)' : '1px solid transparent'
     };
     const addMenuStyle = {
       position: 'absolute', top: 'calc(100% + 8px)', right: 0, minWidth: '188px', padding: '5px',
@@ -2482,42 +2596,82 @@ Respond with ONLY a JSON object:
     // -- small building blocks -------------------------------------------------
     const iconBtn = (Comp, label, onClick, opts = {}) => {
       const dis = !!opts.disabled, act = !!opts.active;
-      const c = dis ? TOK.inkDim : (opts.danger ? TOK.rec : (act ? TOK.accent : TOK.ink));
+      const c = dis ? TOK.inkDim : (opts.danger ? TOK.rec : (act ? TOK.cobalt : TOK.inkSoft));
       return h('button', {
         key: label, 'aria-label': label, title: label, disabled: dis,
         onClick: dis ? undefined : onClick,
-        onMouseEnter: (e) => { if (!dis) e.currentTarget.style.background = TOK.sepSoft; },
+        onMouseEnter: (e) => { if (!dis) e.currentTarget.style.background = act ? TOK.cobaltSoft : 'rgba(46,39,27,0.055)'; },
         onMouseLeave: (e) => { e.currentTarget.style.background = act ? TOK.accentSoft : 'transparent'; },
-        style: { width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: act ? TOK.accentSoft : 'transparent', border: 'none', borderRadius: R.sm, color: c, cursor: dis ? 'default' : 'pointer', transition: 'background 0.15s' }
+        style: {
+          width: 36,
+          height: 36,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: act ? TOK.accentSoft : 'transparent',
+          border: 'none',
+          borderRadius: R.md,
+          color: c,
+          cursor: dis ? 'default' : 'pointer',
+          transition: 'background 0.15s, color 0.15s, transform 0.15s',
+          opacity: dis ? 0.42 : 1
+        }
       }, h(Comp, { size: 19, color: c, weight: act ? 'fill' : 'regular' }));
     };
     const dockItem = (Comp, label, onClick, opts = {}) => {
       const dis = !!opts.disabled, act = !!opts.active;
-      const c = dis ? TOK.inkDim : (act ? TOK.accent : TOK.ink);
+      const c = dis ? TOK.inkDim : (act ? TOK.cobaltDeep : TOK.ink);
       return h('button', {
-        key: label, disabled: dis, onClick: dis ? undefined : onClick,
-        style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '8px 4px', margin: '0 2px', background: act ? TOK.accentSoft : 'transparent', border: 'none', borderRadius: R.lg, color: c, cursor: dis ? 'default' : 'pointer', transition: 'background 0.15s' }
+        key: label, disabled: dis, onClick: dis ? undefined : onClick, title: label,
+        style: {
+          flex: 1,
+          minWidth: 0,
+          minHeight: 52,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 5,
+          padding: '8px 6px',
+          margin: '0 1px',
+          background: act ? 'linear-gradient(180deg, rgba(36,87,214,0.13), rgba(36,87,214,0.075))' : 'transparent',
+          border: act ? '1px solid rgba(36,87,214,0.18)' : '1px solid transparent',
+          borderRadius: 17,
+          color: c,
+          cursor: dis ? 'default' : 'pointer',
+          transition: 'background 0.15s, border-color 0.15s, transform 0.15s',
+          opacity: dis ? 0.45 : 1
+        }
       },
-        h(Comp, { size: 21, color: c, weight: act ? 'fill' : 'regular' }),
-        h('span', { style: { fontSize: 11, fontWeight: act ? 600 : 500, letterSpacing: '0.1px' } }, label)
+        h(Comp, { size: 22, color: c, weight: act ? 'fill' : 'regular' }),
+        h('span', { style: { fontSize: 11.5, fontWeight: act ? 700 : 600, letterSpacing: 0, lineHeight: 1 } }, label)
       );
     };
 
-    // -- top app bar (centered, capped width so it never stretches on desktop) -
+    // -- compact canvas controls ---------------------------------------------
     const topBar = h('div', {
-      style: { position: 'absolute', top: 0, left: 0, right: 0, paddingTop: 'env(safe-area-inset-top)', display: 'flex', justifyContent: 'center', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
+      style: { position: 'absolute', top: 0, left: 0, right: 0, paddingTop: 'env(safe-area-inset-top)', display: 'flex', justifyContent: 'flex-end', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
     },
-      h('div', { style: { pointerEvents: 'auto', width: 'calc(100% - 16px)', maxWidth: 680, marginTop: 8, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 6px 0 10px', background: TOK.surface, border: `1px solid ${TOK.sep}`, borderRadius: R.xl, boxShadow: '0 1px 2px rgba(28,25,23,0.04),0 6px 22px rgba(28,25,23,0.06)' } },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 9 } },
-          h('div', { style: { width: 26, height: 26, borderRadius: R.sm, background: TOK.ink, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Noto Sans SC',sans-serif", fontWeight: 800, fontSize: 15, lineHeight: 1 } }, '聲'),
-          h('span', { style: { fontSize: 14.5, fontWeight: 600, letterSpacing: '-0.01em', color: TOK.ink } }, 'Tone Canvas')
-        ),
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 1 } },
-          iconBtn(ArrowCounterClockwise, 'Undo', () => this.undo(), { disabled: !this._undo.length }),
-          iconBtn(ArrowClockwise, 'Redo', () => this.redo(), { disabled: !this._redo.length }),
-          iconBtn(ShareFat, 'Share', () => this.share(), { disabled: !st.blocks.length }),
-          iconBtn(DotsThree, 'More', () => this.openSheet('more'), { active: st.activeSheet === 'more' })
-        )
+      h('div', { style: {
+        pointerEvents: 'auto',
+        marginTop: 10,
+        marginRight: 10,
+        height: 42,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 2,
+        padding: 4,
+        background: 'rgba(255,255,255,0.46)',
+        border: `1px solid ${TOK.hairline}`,
+        borderRadius: 999,
+        boxShadow: '0 8px 26px rgba(57,43,24,0.10), inset 0 1px 0 rgba(255,255,255,0.62)',
+        backdropFilter: 'blur(30px) saturate(1.35)',
+        WebkitBackdropFilter: 'blur(30px) saturate(1.35)'
+      } },
+        iconBtn(ArrowCounterClockwise, 'Undo', () => this.undo(), { disabled: !this._undo.length }),
+        iconBtn(ArrowClockwise, 'Redo', () => this.redo(), { disabled: !this._redo.length }),
+        iconBtn(DotsThree, 'More', () => this.openSheet('more'), { active: st.activeSheet === 'more' })
       )
     );
 
@@ -2525,10 +2679,25 @@ Respond with ONLY a JSON object:
     const dock = h('div', {
       style: { position: 'absolute', left: 0, right: 0, bottom: 'calc(env(safe-area-inset-bottom) + 10px)', display: 'flex', justifyContent: 'center', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
     },
-      h('div', { style: { pointerEvents: 'auto', width: 'calc(100% - 24px)', maxWidth: 330, display: 'flex', padding: 6, background: TOK.surface, border: `1px solid ${TOK.sep}`, borderRadius: 18, boxShadow: '0 1px 2px rgba(28,25,23,0.04),0 10px 30px rgba(28,25,23,0.08)' } },
+      h('div', { style: {
+        pointerEvents: 'auto',
+        width: 'calc(100% - 24px)',
+        maxWidth: 318,
+        display: 'flex',
+        padding: 6,
+        background: TOK.surfaceStrong,
+        border: `1px solid ${TOK.hairline}`,
+        borderRadius: 24,
+        boxShadow: TOK.shadow,
+        backdropFilter: 'blur(24px) saturate(1.22)',
+        WebkitBackdropFilter: 'blur(24px) saturate(1.22)'
+      } },
         dockItem(TextT, 'Text', () => this.addTextBlock()),
         dockItem(Microphone, 'Dictate', () => this.dictateTap(), { active: st.recording || st.activeSheet === 'dictation' }),
-        dockItem(PencilSimple, 'Draw', () => this.togglePencil(), { active: st.drawMode })
+        dockItem(PencilSimple, 'Draw', () => {
+          if (st.selectedIds.length === 1) this.toggleWaveEdit();
+          else this.togglePencil();
+        }, { active: st.drawMode || st.waveEditId != null })
       )
     );
 
@@ -2540,18 +2709,32 @@ Respond with ONLY a JSON object:
     const empty = (!st.blocks.length) ? h('div', {
       style: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, pointerEvents: 'none', zIndex: 5 }
     },
-      h('div', { style: { fontSize: 16, fontWeight: 500, color: TOK.inkSoft, letterSpacing: '-0.01em' } }, 'Add text to start'),
+      h('div', { style: { fontSize: 15, fontWeight: 650, color: TOK.inkSoft, letterSpacing: 0 } }, 'Start with text or voice'),
       h('div', { style: { display: 'flex', gap: 10, pointerEvents: 'auto' } }, pill(TextT, 'Text', () => this.addTextBlock()), pill(Microphone, 'Dictate', () => this.dictateTap()))
     ) : null;
 
     // -- bottom sheet shell (centered, capped width) ---------------------------
     const sheet = (title, body, onClose) => h('div', { key: 'sheet', style: { position: 'fixed', inset: 0, zIndex: 80, display: 'flex', justifyContent: 'center', alignItems: 'flex-end' } },
-      h('div', { onClick: onClose, style: { position: 'absolute', inset: 0, background: 'rgba(28,25,23,0.18)' } }),
-      h('div', { style: { position: 'relative', width: '100%', maxWidth: 460, maxHeight: '82vh', overflowY: 'auto', background: TOK.panel, border: `1px solid ${TOK.sep}`, borderBottom: 'none', borderRadius: `${R.sheet}px ${R.sheet}px 0 0`, boxShadow: '0 -8px 40px rgba(28,25,23,0.16)', padding: '8px 18px calc(20px + env(safe-area-inset-bottom))' } },
-        h('div', { style: { width: 36, height: 5, borderRadius: 3, background: TOK.sep, margin: '0 auto 12px' } }),
+      h('div', { onClick: onClose, style: { position: 'absolute', inset: 0, background: 'rgba(57,43,24,0.08)' } }),
+      h('div', { style: {
+        position: 'relative',
+        width: 'calc(100% - 16px)',
+        maxWidth: 464,
+        maxHeight: '82vh',
+        overflowY: 'auto',
+        background: TOK.surfaceStrong,
+        border: `1px solid ${TOK.hairline}`,
+        borderBottom: 'none',
+        borderRadius: `${R.sheet}px ${R.sheet}px 0 0`,
+        boxShadow: '0 -16px 46px rgba(57,43,24,0.14), 0 -1px 0 rgba(255,255,255,0.72)',
+        padding: '8px 18px calc(20px + env(safe-area-inset-bottom))',
+        backdropFilter: 'blur(24px) saturate(1.18)',
+        WebkitBackdropFilter: 'blur(24px) saturate(1.18)'
+      } },
+        h('div', { style: { width: 38, height: 4, borderRadius: 4, background: 'rgba(46,39,27,0.18)', margin: '1px auto 14px' } }),
         h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 } },
-          h('div', { style: { fontSize: 17, fontWeight: 600, letterSpacing: '-0.01em', color: TOK.ink } }, title),
-          h('button', { onClick: onClose, 'aria-label': 'Close', style: { width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: R.sm, border: `1px solid ${TOK.sep}`, background: TOK.panel, cursor: 'pointer', color: TOK.inkSoft } }, h(X, { size: 16 }))
+          h('div', { style: { fontSize: 18, fontWeight: 720, letterSpacing: 0, color: TOK.ink } }, title),
+          h('button', { onClick: onClose, 'aria-label': 'Close', style: { width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: R.md, border: `1px solid ${TOK.hairline}`, background: 'rgba(255,255,255,0.44)', cursor: 'pointer', color: TOK.inkSoft } }, h(X, { size: 16 }))
         ),
         body
       )
@@ -2567,23 +2750,23 @@ Respond with ONLY a JSON object:
     let waveTransformUi = null;
     if (xf && xf.phase === 'pending') {
       waveTransformUi = h('div', { key: 'xfp', style: barBase },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 9, padding: '10px 18px', borderRadius: 999, background: '#fff', border: `1px solid ${TOK.sep}`, boxShadow: '0 8px 24px rgba(28,25,23,0.16)' } },
-          h('span', { style: { width: 16, height: 16, borderRadius: '50%', background: 'linear-gradient(90deg,#2563eb,#7c3aed,#ef4444)', animation: 'tc-breathe 1.5s ease-in-out infinite' } }),
-          h('span', { style: { fontSize: 13.5, fontWeight: 600, color: TOK.ink } }, 'Finding matching text… · 正在寻找匹配文字')));
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 9, padding: '10px 18px', borderRadius: 999, background: TOK.surfaceStrong, border: `1px solid ${TOK.hairline}`, boxShadow: TOK.shadowSoft, backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)' } },
+          h('span', { style: { width: 16, height: 16, borderRadius: '50%', background: `linear-gradient(90deg,${TOK.cobalt},#6d5bd6,${TOK.vermilion})`, animation: 'tc-breathe 1.5s ease-in-out infinite' } }),
+          h('span', { style: { fontSize: 13.5, fontWeight: 650, color: TOK.ink } }, 'Matching tone text')));
     } else if (xf && xf.phase === 'done') {
-      const btn = (label, onClick, primary) => h('button', { key: label, onClick, style: { display: 'flex', alignItems: 'center', gap: 6, padding: '10px 16px', borderRadius: 999, border: primary ? 'none' : `1px solid ${TOK.sep}`, background: primary ? TOK.ink : '#fff', color: primary ? '#fff' : TOK.ink, fontWeight: 600, fontSize: 13.5, cursor: 'pointer' } }, label);
-      waveTransformUi = h('div', { key: 'xfd', style: { ...barBase, display: 'flex', gap: 8, background: 'transparent', filter: 'drop-shadow(0 8px 24px rgba(28,25,23,0.2))' } },
-        btn('✓ 保留 Keep', () => this.endTransform(), true),
-        btn('⟳ 换一个 Another', () => this.anotherCandidate()),
-        btn('↺ Undo', () => { this.endTransform(); this.undo(); }));
+      const btn = (label, onClick, primary) => h('button', { key: label, onClick, style: { display: 'flex', alignItems: 'center', gap: 6, padding: '10px 16px', borderRadius: 999, border: primary ? 'none' : `1px solid ${TOK.hairline}`, background: primary ? TOK.ink : TOK.surfaceStrong, color: primary ? '#fff' : TOK.ink, fontWeight: 650, fontSize: 13.5, cursor: 'pointer', boxShadow: primary ? '0 8px 20px rgba(21,19,15,0.18)' : TOK.shadowSoft } }, label);
+      waveTransformUi = h('div', { key: 'xfd', style: { ...barBase, display: 'flex', gap: 8, background: 'transparent' } },
+        btn('Keep', () => this.endTransform(), true),
+        btn('Another', () => this.anotherCandidate()),
+        btn('Undo', () => { this.endTransform(); this.undo(); }));
     }
-    // Pencil (Draw) hint — draw a tone line, left → right
+    // Draw hint — draw a tone line, left to right
     const topBar2 = { position: 'absolute', top: 'calc(env(safe-area-inset-top) + 62px)', left: '50%', transform: 'translateX(-50%)', zIndex: 55 };
     const drawChip = null;
     const drawHint = st.drawMode ? h('div', { key: 'drawhint', style: { ...topBar2, display: 'flex', gap: 8, alignItems: 'center' } },
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: 7, padding: '9px 15px', borderRadius: 999, background: '#fff', border: `1px solid ${TOK.sep}`, boxShadow: '0 6px 20px rgba(28,25,23,0.12)', fontSize: 13.5, fontWeight: 600, color: TOK.ink } },
-        h(Scribble, { size: 16, color: TOK.accent }), '从左到右画线生成短句 · draw a tone phrase, left → right'),
-      h('button', { onClick: () => this.setState({ drawMode: false, drawPath: null }), 'aria-label': 'Cancel', style: { width: 34, height: 34, borderRadius: '50%', border: `1px solid ${TOK.sep}`, background: '#fff', cursor: 'pointer', color: TOK.inkSoft, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, h(X, { size: 16 }))) : null;
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 7, padding: '9px 15px', borderRadius: 999, background: TOK.surfaceStrong, border: `1px solid ${TOK.hairline}`, boxShadow: TOK.shadowSoft, fontSize: 13.5, fontWeight: 650, color: TOK.ink, backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)' } },
+        h(PencilSimple, { size: 17, color: TOK.cobalt }), 'Draw a tone line'),
+      h('button', { onClick: () => this.setState({ drawMode: false, drawPath: null }), 'aria-label': 'Cancel', style: { width: 34, height: 34, borderRadius: '50%', border: `1px solid ${TOK.hairline}`, background: TOK.surfaceStrong, cursor: 'pointer', color: TOK.inkSoft, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: TOK.shadowSoft } }, h(X, { size: 16 }))) : null;
 
     // manual chip only when there's an override, no key set, and no transform running
     const waveBlk = st.waveEditId != null ? st.blocks.find(b => b.id === st.waveEditId) : null;
@@ -2594,10 +2777,10 @@ Respond with ONLY a JSON object:
     ) : null;
 
     // -- toast -----------------------------------------------------------------
-    const toast = st.toast ? h('div', { key: 'toast', style: { position: 'fixed', left: '50%', bottom: 'calc(100px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', background: TOK.ink, color: '#fff', fontSize: 13, fontWeight: 500, padding: '9px 15px', borderRadius: R.md, zIndex: 90, boxShadow: '0 8px 24px rgba(28,25,23,0.28)' } }, st.toast) : null;
+    const toast = st.toast ? h('div', { key: 'toast', style: { position: 'fixed', left: '50%', bottom: 'calc(100px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', background: TOK.ink, color: '#fff', fontSize: 13, fontWeight: 600, padding: '9px 15px', borderRadius: R.md, zIndex: 90, boxShadow: '0 8px 24px rgba(28,25,23,0.28)' } }, st.toast) : null;
 
     return h('div', {
-      style: { position: 'fixed', inset: 0, overflow: 'hidden', background: TOK.canvas, fontFamily: "system-ui,-apple-system,'Segoe UI',sans-serif", color: TOK.ink, WebkitFontSmoothing: 'antialiased' }
+      style: { position: 'fixed', inset: 0, overflow: 'hidden', background: TOK.canvas, fontFamily: "-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Segoe UI',system-ui,sans-serif", color: TOK.ink, WebkitFontSmoothing: 'antialiased', textRendering: 'optimizeLegibility' }
     }, v.canvasContent, empty, drawGuides, canvasDrawOverlay, topBar, dock, activeSheet, rewriteChip, waveTransformUi, drawChip, drawHint, toast);
   }
 
@@ -2617,27 +2800,27 @@ Respond with ONLY a JSON object:
   sectionHeader(h, Comp, text) {
     return h('div', { style: { display: 'flex', alignItems: 'center', gap: 7, margin: '4px 0 10px', color: TOK.inkSoft } },
       Comp ? h(Comp, { size: 17, color: TOK.inkSoft }) : null,
-      h('span', { style: { fontSize: 12.5, fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase' } }, text));
+      h('span', { style: { fontSize: 12, fontWeight: 760, letterSpacing: 0, textTransform: 'none' } }, text));
   }
 
   sheetDictation(v, h, sheet) {
     const st = this.state, rec = st.recording;
     // shadcn-style buttons (shared visual language with the other sheets)
-    const btnOutline = (Comp, label, onClick) => h('button', { onClick, style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 44, borderRadius: R.md, border: `1px solid ${TOK.sep}`, background: TOK.panel, color: TOK.ink, fontWeight: 600, fontSize: 14, cursor: 'pointer' } }, h(Comp, { size: 17 }), label);
-    const btnPrimary = (Comp, label, onClick) => h('button', { onClick, style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 44, borderRadius: R.md, border: 'none', background: TOK.ink, color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' } }, h(Comp, { size: 17, weight: 'bold' }), label);
+    const btnOutline = (Comp, label, onClick) => h('button', { onClick, style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 46, borderRadius: R.lg, border: `1px solid ${TOK.hairline}`, background: 'rgba(255,255,255,0.34)', color: TOK.ink, fontWeight: 650, fontSize: 14, cursor: 'pointer' } }, h(Comp, { size: 17 }), label);
+    const btnPrimary = (Comp, label, onClick) => h('button', { onClick, style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 46, borderRadius: R.lg, border: 'none', background: TOK.ink, color: '#fff', fontWeight: 650, fontSize: 14, cursor: 'pointer', boxShadow: '0 8px 20px rgba(21,19,15,0.18)' } }, h(Comp, { size: 17, weight: 'bold' }), label);
 
     const body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 16 } },
       // status card
-      h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '22px 16px', borderRadius: R.lg, border: `1px solid ${TOK.sep}`, background: '#fafaf9' } },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, color: rec ? TOK.rec : TOK.inkSoft, fontSize: 13.5, fontWeight: 600 } },
+      h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '22px 16px', borderRadius: 18, border: `1px solid ${TOK.hairline}`, background: 'rgba(255,255,255,0.32)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.55)' } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, color: rec ? TOK.rec : TOK.inkSoft, fontSize: 13.5, fontWeight: 700 } },
           h('span', { style: { width: 8, height: 8, borderRadius: '50%', background: rec ? TOK.rec : TOK.inkDim, animation: rec ? 'tc-pulse 1.2s ease-out infinite' : 'none' } }),
           rec ? (st.recStatus || 'Listening…') : 'Paused'
         ),
-        h(Waveform, { size: 38, color: rec ? TOK.ink : TOK.inkDim, weight: 'duotone' }),
-        h('div', { style: { fontSize: 12.5, color: TOK.inkSoft, textAlign: 'center' } }, 'Speak Mandarin — text appears on the canvas live.')
+        h(Waveform, { size: 38, color: rec ? TOK.vermilion : TOK.inkDim, weight: 'duotone' }),
+        h('div', { style: { fontSize: 12.5, color: TOK.inkSoft, textAlign: 'center' } }, 'Mandarin dictation lands on the canvas.')
       ),
       // pause / resume (secondary, full width)
-      h('button', { onClick: () => (rec ? this.stopDictation() : this.startDictation()), style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, height: 44, borderRadius: R.md, border: `1px solid ${TOK.sep}`, background: '#fafaf9', color: TOK.ink, fontWeight: 600, fontSize: 14, cursor: 'pointer' } },
+      h('button', { onClick: () => (rec ? this.stopDictation() : this.startDictation()), style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, height: 46, borderRadius: R.lg, border: `1px solid ${TOK.hairline}`, background: 'rgba(255,255,255,0.34)', color: TOK.ink, fontWeight: 650, fontSize: 14, cursor: 'pointer' } },
         h(rec ? Pause : Microphone, { size: 18, weight: 'fill' }), rec ? 'Pause' : 'Resume'),
       // cancel / insert
       h('div', { style: { display: 'flex', gap: 10 } },
@@ -2660,14 +2843,14 @@ Respond with ONLY a JSON object:
       return h('button', {
         key: val,
         onClick: () => this.setCanvasMode(val),
-        style: { display: 'flex', alignItems: 'center', gap: 13, width: '100%', padding: '11px 10px', background: active ? TOK.accentSoft : 'transparent', border: 'none', borderRadius: R.lg, textAlign: 'left', cursor: 'pointer' }
+        style: { display: 'flex', alignItems: 'center', gap: 13, width: '100%', minHeight: 60, padding: '11px 10px', background: active ? TOK.cobaltSoft : 'transparent', border: active ? '1px solid rgba(36,87,214,0.16)' : '1px solid transparent', borderRadius: R.lg, textAlign: 'left', cursor: 'pointer' }
       },
-        h('div', { style: { width: 28, display: 'flex', justifyContent: 'center' } }, h(Comp, { size: 25, color: active ? TOK.accent : TOK.ink })),
+        h('div', { style: { width: 28, display: 'flex', justifyContent: 'center' } }, h(Comp, { size: 25, color: active ? TOK.cobalt : TOK.ink })),
         h('div', { style: { flex: 1 } },
-          h('div', { style: { fontSize: 14.5, fontWeight: 600, color: TOK.ink } }, title),
+          h('div', { style: { fontSize: 14.5, fontWeight: 700, color: TOK.ink } }, title),
           h('div', { style: { fontSize: 12.5, color: TOK.inkSoft, marginTop: 1 } }, sub)
         ),
-        active ? h(Check, { size: 18, weight: 'bold', color: TOK.accent }) : null
+        active ? h(Check, { size: 18, weight: 'bold', color: TOK.cobalt }) : null
       );
     };
     return sheet('Tone Mode', h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } }, opts.map(row)), () => this.closeSheet());
