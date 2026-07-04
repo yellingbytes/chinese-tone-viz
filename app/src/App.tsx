@@ -12,7 +12,7 @@ import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import {
   ArrowCounterClockwise, ArrowClockwise, DotsThree,
   TextT, Microphone, SlidersHorizontal, Palette, TextAa,
-  X, Check, Pause, Waveform, Info, Trash, PenNib, Sparkle, Key, Copy, PencilSimple, CaretDown,
+  X, Check, Info, Trash, PenNib, Sparkle, Key, Copy, PencilSimple, CaretDown,
 } from '@phosphor-icons/react';
 import { ToneWaveIcon, HanziSegmentIcon, ToneSegmentsIcon } from './ToneIcons';
 
@@ -628,7 +628,8 @@ export default class App extends React.Component {
     defFont: 'noto-sans',    // typeface applied to new blocks / shown in toolbar
     script: 'simplified',    // 'simplified' | 'traditional' — render-time glyph conversion
     addMenuOpen: false,      // "+ Add Text" split-button dropdown
-    recording: false,        // live Chinese dictation in progress
+    recording: false,        // live Chinese dictation in progress (engine capturing)
+    dictating: false,        // inline dictation bar is open (from tap until insert/cancel)
     recStatus: '',           // short status line shown on the record chip
     activeSheet: null,       // null | 'dictation' | 'tone' | 'style' | 'motion'
     moreMenuOpen: false,     // top-right three-dot dropdown
@@ -1694,6 +1695,7 @@ Respond with ONLY a JSON object:
       blocks: [...s.blocks, { id, x: c.x - 150, y: c.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont }],
       selectedIds: [id], editingId: id, recording: true, recStatus: 'Listening…'
     }));
+    this._startWaveViz();
     this._recBlockId = id;
     this._recFinal = '';        // dictation appended this session (after _recBase)
     this._editPre = this.snap(); // so manual edits during dictation are undoable
@@ -1753,6 +1755,7 @@ Respond with ONLY a JSON object:
       blocks: [...s.blocks, { id, x: c.x - 150, y: c.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont }],
       selectedIds: [id], editingId: id, recording: true, recStatus: 'Starting…'
     }));
+    this._startWaveViz();
     this._recBlockId = id; this._editPre = this.snap(); this._editDirty = true;
 
     const render = () => {
@@ -1787,7 +1790,85 @@ Respond with ONLY a JSON object:
     }
   }
 
+  /* --- live soundwave viz for the inline dictation bar -----------------
+   * Drives the bar heights imperatively (via a ref + requestAnimationFrame)
+   * so we never re-render the whole canvas per frame. Uses a real mic
+   * AnalyserNode when the platform allows a second audio consumer, and
+   * falls back to a smooth synthetic wave otherwise (e.g. native WebViews). */
+  _startWaveViz() {
+    if (this._waveActive) return;
+    this._waveActive = true;
+
+    // The synthetic wave runs immediately so the bar is always alive; a real
+    // mic AnalyserNode transparently takes over the level source once (and if)
+    // it connects. This keeps the viz moving even where a second audio consumer
+    // isn't available (native WebViews) or getUserMedia is slow to resolve.
+    let t = 0;
+    const synth = (n) => {
+      t += 0.09;
+      const out = new Array(n);
+      for (let i = 0; i < n; i++) {
+        const p = i * 0.55;
+        const a = Math.sin(t + p) * 0.5 + 0.5;
+        const b = Math.sin(t * 1.9 + p * 0.7) * 0.5 + 0.5;
+        out[i] = 0.12 + 0.7 * (a * 0.6 + b * 0.4);
+      }
+      return out;
+    };
+    this._waveLevels = synth;   // swapped to the analyser reader when mic is live
+
+    const smooth = [];
+    const tick = () => {
+      if (!this._waveActive) return;
+      const el = this._waveBarsEl;
+      if (el && el.children && el.children.length) {
+        const n = el.children.length;
+        const levels = this._waveLevels(n);
+        for (let i = 0; i < n; i++) {
+          const target = Math.max(0, Math.min(1, levels[i] || 0));
+          smooth[i] = smooth[i] == null ? target : smooth[i] + (target - smooth[i]) * 0.35;
+          el.children[i].style.height = (3 + smooth[i] * 24).toFixed(1) + 'px';
+        }
+      }
+      this._waveRaf = requestAnimationFrame(tick);
+    };
+    tick();
+
+    const AC = (typeof window !== 'undefined') && (window.AudioContext || window.webkitAudioContext);
+    if (AC && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+        if (!this._waveActive) { stream.getTracks().forEach(tr => tr.stop()); return; }
+        this._waveStream = stream;
+        const ctx = new AC(); this._waveCtx = ctx;
+        const src = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        analyser.smoothingTimeConstant = 0.82;
+        src.connect(analyser);
+        const data = new Uint8Array(analyser.fftSize);
+        const hist = [];   // scrolling amplitude history, one entry per frame
+        this._waveLevels = (n) => {
+          if (hist.length !== n) { hist.length = 0; for (let i = 0; i < n; i++) hist.push(0); }
+          analyser.getByteTimeDomainData(data);
+          let sum = 0;
+          for (let i = 0; i < data.length; i++) { const x = (data[i] - 128) / 128; sum += x * x; }
+          const rms = Math.sqrt(sum / data.length);
+          hist.shift(); hist.push(Math.min(1, rms * 3.6));
+          return hist;
+        };
+      }).catch(() => {});   // keep the synthetic wave running
+    }
+  }
+  _stopWaveViz() {
+    this._waveActive = false;
+    if (this._waveRaf) { cancelAnimationFrame(this._waveRaf); this._waveRaf = null; }
+    if (this._waveStream) { try { this._waveStream.getTracks().forEach(t => t.stop()); } catch (e) {} this._waveStream = null; }
+    if (this._waveCtx) { try { this._waveCtx.close(); } catch (e) {} this._waveCtx = null; }
+    this._waveLevels = null;
+  }
+
   stopDictation(status) {
+    this._stopWaveViz();
     if (this._nativeStt) {
       this._nativeStt = false;
       try { SpeechRecognition.stop(); } catch (e) {}
@@ -2465,12 +2546,73 @@ Respond with ONLY a JSON object:
       selectedIds: [id], editingId: id
     }));
   }
-  // dictation routed through the bottom sheet
-  dictateTap() { this.setState({ activeSheet: 'dictation', moreMenuOpen: false }); if (!this.state.recording) this.startDictation(); }
-  insertDictation() { this.stopDictation(); this.setState({ activeSheet: null }); }
+  // dictation runs inline: the bottom dock morphs into a live soundwave bar
+  // (no sheet), so the canvas stays fully visible while you speak. The bar is
+  // shown from the moment you tap — driven by `dictating`, not the engine's
+  // `recording` — so you get feedback even before the mic is granted.
+  dictateTap() {
+    this.setState({ dictating: true, activeSheet: null, moreMenuOpen: false });
+    this._startWaveViz();
+    if (!this.state.recording) this.startDictation();
+  }
+  insertDictation() { this.stopDictation(); this.setState({ dictating: false, activeSheet: null }); }
   cancelDictation() {
     const id = this._recBlockId; this.stopDictation();
-    this.setState(s => ({ blocks: s.blocks.filter(b => b.id !== id), selectedIds: s.selectedIds.filter(x => x !== id), activeSheet: null, toolbarMenu: null, moreMenuOpen: false }));
+    this.setState(s => ({ dictating: false, blocks: s.blocks.filter(b => b.id !== id), selectedIds: s.selectedIds.filter(x => x !== id), activeSheet: null, toolbarMenu: null, moreMenuOpen: false }));
+  }
+
+  // Inline dictation bar: replaces the bottom dock while recording. A live
+  // soundwave fills the pill, with cancel (✕) and insert (✓) at the trailing
+  // edge — same light glass shell as the dock, no leading "+" affordance.
+  renderDictationBar(h) {
+    const st = this.state;
+    const BARS = 34;
+    const circle = (extra) => ({ width: 40, height: 40, borderRadius: '50%', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flex: '0 0 auto', ...extra });
+    const bars = Array.from({ length: BARS }, (_, i) => h('div', {
+      key: i,
+      style: { width: 3, height: 3, borderRadius: 2, background: TOK.cobalt, flex: '0 0 auto' }
+    }));
+    // Live waveform once the engine is capturing; otherwise a status line so the
+    // user always sees why (starting up, or mic blocked) with cancel/insert still
+    // available.
+    const capturing = st.recording;
+    const status = st.recStatus && !/^…|^Listening/.test(st.recStatus) ? st.recStatus : (capturing ? '' : 'Starting…');
+    const middle = capturing
+      ? h('div', {
+          ref: (el) => { this._waveBarsEl = el; },
+          style: { flex: 1, minWidth: 0, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'space-between', overflow: 'hidden' }
+        }, bars)
+      : h('div', { style: { flex: 1, minWidth: 0, height: 36, display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' } },
+          h('span', { style: { width: 8, height: 8, borderRadius: '50%', flex: '0 0 auto', background: TOK.inkDim, animation: 'tc-pulse 1.2s ease-out infinite' } }),
+          h('span', { style: { fontSize: 13, fontWeight: 600, color: TOK.inkSoft, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, status)
+        );
+    return h('div', {
+      key: 'dictbar',
+      style: { position: 'absolute', left: 0, right: 0, bottom: 'calc(env(safe-area-inset-bottom) + 10px)', display: 'flex', justifyContent: 'center', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
+    },
+      h('div', {
+        className: 'tc-dock-shell',
+        style: {
+          pointerEvents: 'auto',
+          width: 'calc(100% - 24px)',
+          maxWidth: 340,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '6px 8px 6px 18px',
+          background: TOK.surfaceStrong,
+          border: `1px solid ${TOK.hairline}`,
+          borderRadius: 24,
+          boxShadow: TOK.shadow,
+          backdropFilter: 'blur(24px) saturate(1.22)',
+          WebkitBackdropFilter: 'blur(24px) saturate(1.22)'
+        }
+      },
+        middle,
+        h('button', { onClick: () => this.cancelDictation(), 'aria-label': 'Cancel dictation', title: 'Cancel', style: circle({ background: 'rgba(46,39,27,0.07)', color: TOK.inkSoft }) }, h(X, { size: 18, weight: 'bold' })),
+        h('button', { onClick: () => this.insertDictation(), 'aria-label': 'Insert dictation', title: 'Insert', style: circle({ background: TOK.ink, color: '#fff', boxShadow: '0 6px 16px rgba(21,19,15,0.22)' }) }, h(Check, { size: 18, weight: 'bold' }))
+      )
+    );
   }
 
   renderVals() {
@@ -2739,7 +2881,8 @@ Respond with ONLY a JSON object:
     );
 
     // -- bottom creation dock (selection tools live in the text toolbar) -------
-    const dock = h('div', {
+    // While dictating, the dock morphs into an inline live soundwave bar.
+    const dock = st.dictating ? this.renderDictationBar(h) : h('div', {
       style: { position: 'absolute', left: 0, right: 0, bottom: 'calc(env(safe-area-inset-bottom) + 10px)', display: 'flex', justifyContent: 'center', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
     },
       h('div', { className: 'tc-dock-shell', style: {
@@ -2851,7 +2994,6 @@ Respond with ONLY a JSON object:
   renderActiveSheet(v, h, sheet) {
     const st = this.state;
     switch (st.activeSheet) {
-      case 'dictation': return this.sheetDictation(v, h, sheet);
       case 'tone': return this.sheetTone(v, h, sheet);
       case 'style': return this.sheetStyle(v, h, sheet);
       case 'rewrite': return this.sheetRewrite(v, h, sheet);
@@ -2903,33 +3045,6 @@ Respond with ONLY a JSON object:
       h('span', { style: { fontSize: 12, fontWeight: 760, letterSpacing: 0, textTransform: 'none' } }, text));
   }
 
-  sheetDictation(v, h, sheet) {
-    const st = this.state, rec = st.recording;
-    // shadcn-style buttons (shared visual language with the other sheets)
-    const btnOutline = (Comp, label, onClick) => h('button', { onClick, style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 46, borderRadius: R.lg, border: `1px solid ${TOK.hairline}`, background: 'rgba(255,255,255,0.34)', color: TOK.ink, fontWeight: 650, fontSize: 14, cursor: 'pointer' } }, h(Comp, { size: 17 }), label);
-    const btnPrimary = (Comp, label, onClick) => h('button', { onClick, style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 46, borderRadius: R.lg, border: 'none', background: TOK.ink, color: '#fff', fontWeight: 650, fontSize: 14, cursor: 'pointer', boxShadow: '0 8px 20px rgba(21,19,15,0.18)' } }, h(Comp, { size: 17, weight: 'bold' }), label);
-
-    const body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 16 } },
-      // status card
-      h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '22px 16px', borderRadius: 18, border: `1px solid ${TOK.hairline}`, background: 'rgba(255,255,255,0.32)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.55)' } },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, color: rec ? TOK.rec : TOK.inkSoft, fontSize: 13.5, fontWeight: 700 } },
-          h('span', { style: { width: 8, height: 8, borderRadius: '50%', background: rec ? TOK.rec : TOK.inkDim, animation: rec ? 'tc-pulse 1.2s ease-out infinite' : 'none' } }),
-          rec ? (st.recStatus || 'Listening…') : 'Paused'
-        ),
-        h(Waveform, { size: 38, color: rec ? TOK.vermilion : TOK.inkDim, weight: 'duotone' }),
-        h('div', { style: { fontSize: 12.5, color: TOK.inkSoft, textAlign: 'center' } }, 'Mandarin dictation lands on the canvas.')
-      ),
-      // pause / resume (secondary, full width)
-      h('button', { onClick: () => (rec ? this.stopDictation() : this.startDictation()), style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, height: 46, borderRadius: R.lg, border: `1px solid ${TOK.hairline}`, background: 'rgba(255,255,255,0.34)', color: TOK.ink, fontWeight: 650, fontSize: 14, cursor: 'pointer' } },
-        h(rec ? Pause : Microphone, { size: 18, weight: 'fill' }), rec ? 'Pause' : 'Resume'),
-      // cancel / insert
-      h('div', { style: { display: 'flex', gap: 10 } },
-        btnOutline(X, 'Cancel', () => this.cancelDictation()),
-        btnPrimary(Check, 'Insert', () => this.insertDictation())
-      )
-    );
-    return sheet('Dictate', body, () => this.closeSheet());
-  }
 
   sheetTone(v, h, sheet) {
     const st = this.state;
