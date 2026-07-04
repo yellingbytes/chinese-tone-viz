@@ -12,9 +12,9 @@ import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import {
   ArrowCounterClockwise, ArrowClockwise, DotsThree,
   TextT, Microphone, SlidersHorizontal, Palette, TextAa,
-  X, Check, Pause, Waveform, Info, Trash, PenNib, Sparkle, Key, Copy, PencilSimple,
+  X, Check, Pause, Waveform, Info, Trash, PenNib, Sparkle, Key, Copy, PencilSimple, CaretDown,
 } from '@phosphor-icons/react';
-import { ToneWaveIcon, HanziSegmentIcon, ToneSegmentsIcon, ToneFrameIcon, EdgeJointsIcon } from './ToneIcons';
+import { ToneWaveIcon, HanziSegmentIcon, ToneSegmentsIcon } from './ToneIcons';
 
 // Crafted Tone Instrument — rice paper, deep ink, cobalt geometry, vermilion live state.
 const TOK = {
@@ -630,7 +630,8 @@ export default class App extends React.Component {
     addMenuOpen: false,      // "+ Add Text" split-button dropdown
     recording: false,        // live Chinese dictation in progress
     recStatus: '',           // short status line shown on the record chip
-    activeSheet: null,       // null | 'dictation' | 'tone' | 'style' | 'motion' | 'more'
+    activeSheet: null,       // null | 'dictation' | 'tone' | 'style' | 'motion'
+    moreMenuOpen: false,     // top-right three-dot dropdown
     toolbarMenu: null,       // null | contextual second-level toolbar menu
     canvasMode: 'hanziSegments', // 'hanzi' | 'hanziSegments' | 'segmentsOnly' | 'motionPreview'
     motionPlaying: false,    // Motion preview animation in progress
@@ -1555,7 +1556,7 @@ Respond with ONLY a JSON object:
     if (mod && e.key === '0') { e.preventDefault(); this.setState({ zoom: 1, panX: 0, panY: 0 }); return; }
     if (mod && (e.key === '=' || e.key === '+')) { e.preventDefault(); this.zoomBy(1.2, window.innerWidth / 2, window.innerHeight / 2); return; }
     if (mod && (e.key === '-' || e.key === '_')) { e.preventDefault(); this.zoomBy(1 / 1.2, window.innerWidth / 2, window.innerHeight / 2); return; }
-    if ((e.key === 'Backspace' || e.key === 'Delete') && selectedIds.length) { e.preventDefault(); this.del(); return; }
+    if ((e.key === 'Backspace' || e.key === 'Delete') && selectedIds.length && tag !== 'INPUT' && tag !== 'TEXTAREA') { e.preventDefault(); this.del(); return; }
     if (e.key === 'Escape') { if (this.state.toolbarMenu) { this.setState({ toolbarMenu: null }); return; } if (selectedIds.length) this.setState({ selectedIds: [] }); return; }
     if (e.key === 'Enter' && selectedIds.length === 1) { e.preventDefault(); this.startEdit(selectedIds[0]); }
   }
@@ -1584,6 +1585,7 @@ Respond with ONLY a JSON object:
   }
   // apply a colour / weight patch to the selected blocks (and remember as default)
   applyStyle(patch) {
+    if (patch && patch.font) this.ensureFont(patch.font, this.state.script);
     this.setState(s => {
       const def = {};
       if ('color' in patch) def.defColor = patch.color;
@@ -1591,6 +1593,17 @@ Respond with ONLY a JSON object:
       if ('font' in patch) def.defFont = patch.font;
       const ids = s.selectedIds;
       if (!ids.length) return def;
+      return { ...def, blocks: s.blocks.map(b => ids.includes(b.id) ? { ...b, ...patch } : b) };
+    });
+  }
+  applyStyleFromToolbar(blockId, patch) {
+    if (patch && patch.font) this.ensureFont(patch.font, this.state.script);
+    this.setState(s => {
+      const def = {};
+      if ('color' in patch) def.defColor = patch.color;
+      if ('weight' in patch) def.defWeight = patch.weight;
+      if ('font' in patch) def.defFont = patch.font;
+      const ids = s.selectedIds.includes(blockId) ? s.selectedIds : [blockId];
       return { ...def, blocks: s.blocks.map(b => ids.includes(b.id) ? { ...b, ...patch } : b) };
     });
   }
@@ -1868,9 +1881,6 @@ Respond with ONLY a JSON object:
           }
         })));
       }
-      if (!editing && this.state.selectedIds[0] === block.id) {
-        children.push(this.renderTextToolbar(block));
-      }
     }
     // the glyph svg / placeholder
     if (empty && !editing) {
@@ -1878,7 +1888,7 @@ Respond with ONLY a JSON object:
         key: 'ph', style: { padding: '14px 20px', color: TOK.inkDim, fontSize: '15px', fontWeight: 500, letterSpacing: 0, whiteSpace: 'nowrap' }
       }, '输入中文'));
     } else {
-      children.push(React.createElement('div', { key: 'svg', style: { position: 'absolute', left: 0, top: 0 } }, this.renderBlockSvg(block, M)));
+      children.push(React.createElement('div', { key: 'svg', style: { position: 'absolute', left: 0, top: 0, pointerEvents: 'none' } }, this.renderBlockSvg(block, M)));
     }
     const xf = this.state.waveXform, xfHere = xf && xf.blockId === block.id;
     if (this.state.waveEditId === block.id && !editing && !empty) {
@@ -1889,7 +1899,6 @@ Respond with ONLY a JSON object:
       // transform can run from a Pencil draw even without Wave handles
       children.push(this.renderXformShimmer(block, lay.specs, bbox));
     }
-
     const blockDiv = React.createElement('div', {
       key: 'blk-' + block.id,
       onMouseDown: (e) => this.onBlockDown(e, block.id),
@@ -1934,7 +1943,7 @@ Respond with ONLY a JSON object:
     return React.createElement(React.Fragment, { key: 'f-' + block.id }, blockDiv, editor);
   }
 
-  renderTextToolbar(block) {
+  renderTextToolbar(block, bbox, fixed = false) {
     const h = React.createElement;
     const z = this.state.zoom || 1;
     const one = this.state.selectedIds.length === 1;
@@ -1956,8 +1965,16 @@ Respond with ONLY a JSON object:
     const curFont = block.font || this.state.defFont;
     const customColors = [...COLOR_CHIPS, '#6b7280'];
     const currentColor = (block.color || this.state.defColor || '#1c1917').toLowerCase();
-    const currentScript = this.state.script === 'traditional' ? '繁' : '简';
     const controlH = 34;
+    const applyToolbarStyle = (patch) => this.applyStyleFromToolbar(block.id, patch);
+    const blockTopScreen = ((block.y + (bbox ? bbox.y : 0)) * z) + (this.state.panY || 0);
+    const toolbarTopScreen = fixed ? Math.max(8, blockTopScreen - 62) : blockTopScreen - 62;
+    const openMenusBelow = toolbarTopScreen < 150;
+    const screenLeft = ((block.x + (bbox ? bbox.x : 0) + (bbox ? bbox.w : 0) / 2) * z) + (this.state.panX || 0);
+    const viewportW = typeof window !== 'undefined' ? window.innerWidth : 740;
+    const viewportH = typeof window !== 'undefined' ? window.innerHeight : 720;
+    const fixedLeft = Math.max(16, Math.min(viewportW - 16, screenLeft));
+    const fixedToolbarW = Math.min(468, viewportW * 0.94);
     const toolBtn = (Comp, label, onClick, opts = {}) => {
       const active = !!opts.active, disabled = !!opts.disabled;
       const color = disabled ? TOK.inkDim : (opts.danger ? TOK.rec : (active ? TOK.cobaltDeep : TOK.ink));
@@ -1991,6 +2008,13 @@ Respond with ONLY a JSON object:
         showLabel ? h('span', null, label) : null
       );
     };
+    const chevron = (key) => h(CaretDown, {
+      key,
+      size: 12,
+      color: TOK.ink,
+      weight: 'bold',
+      style: { display: 'block', flex: '0 0 auto', opacity: 0.82 }
+    });
     const dropdownBtn = (key, label, value, width) => h('button', {
       key,
       title: label,
@@ -2011,9 +2035,10 @@ Respond with ONLY a JSON object:
         gap: 10,
         fontSize: 13,
         fontWeight: 600,
+        lineHeight: 1,
         whiteSpace: 'nowrap'
       }
-    }, h('span', null, value), h('span', { style: { fontSize: 13, lineHeight: 1, opacity: 0.9 } }, '⌄'));
+    }, h('span', { style: { display: 'flex', alignItems: 'center', lineHeight: 1 } }, value), chevron(key + '-chev'));
     const colorButton = h('button', {
       key: 'style',
       title: 'Style',
@@ -2030,37 +2055,63 @@ Respond with ONLY a JSON object:
         cursor: 'pointer',
         display: 'flex',
         alignItems: 'center',
-        gap: 7
+        gap: 7,
+        lineHeight: 1
       }
     },
       h('span', { style: { width: 20, height: 20, borderRadius: '50%', border: '2px solid rgba(46,39,27,0.16)', background: block.color || this.state.defColor, boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.34)' } }),
-      h('span', { style: { fontSize: 13, lineHeight: 1, opacity: 0.9 } }, '⌄')
+      chevron('style-chev')
     );
     const divider = (key) => h('div', { key, style: { width: 1, height: 30, background: mutedLine, margin: '0 3px', flex: '0 0 auto' } });
-    const popBase = (key, left, width, children, opts = {}) => menu === key ? h('div', {
-      key: key + '-menu',
-      onMouseDown: (e) => e.stopPropagation(),
-      style: {
-        position: 'absolute',
-        bottom: opts.bottom || 'calc(100% + 10px)',
-        left,
-        width,
-        maxHeight: opts.maxHeight || 'min(360px, calc(100vh - 120px))',
-        overflowY: 'auto',
-        padding: opts.padding == null ? 14 : opts.padding,
-        background: TOK.surfaceStrong,
-        border: `1px solid ${TOK.hairline}`,
-        borderRadius: 18,
-        boxShadow: TOK.shadow,
-        color: TOK.ink,
-        backdropFilter: 'blur(22px) saturate(1.18)',
-        WebkitBackdropFilter: 'blur(22px) saturate(1.18)',
-        zIndex: 2
-      }
-    }, children) : null;
+    const popBase = (key, left, width, children, opts = {}) => {
+      if (menu !== key) return null;
+      const maxPx = opts.maxPx || 360;
+      const menuMaxHeightPx = Math.max(152, Math.floor(openMenusBelow ? (viewportH - toolbarTopScreen - 86) : (toolbarTopScreen - 16)));
+      const anchorLeft = this._toolbarRect ? this._toolbarRect.left : (fixedLeft - fixedToolbarW / 2);
+      const fixedMenuLeft = Math.max(8, Math.min(viewportW - width - 8, anchorLeft + left));
+      const fixedMenuTop = openMenusBelow ? toolbarTopScreen + 56 : 'auto';
+      const fixedMenuBottom = openMenusBelow ? 'auto' : Math.max(8, viewportH - toolbarTopScreen + 10);
+      return h('div', {
+        key: key + '-menu',
+        onMouseDown: (e) => e.stopPropagation(),
+        style: {
+          position: fixed ? 'fixed' : 'absolute',
+          bottom: fixed ? fixedMenuBottom : (opts.bottom || (openMenusBelow ? 'auto' : 'calc(100% + 10px)')),
+          top: fixed ? fixedMenuTop : (opts.top || (openMenusBelow ? 'calc(100% + 10px)' : 'auto')),
+          left: fixed ? fixedMenuLeft : left,
+          width,
+          maxHeight: opts.maxHeight || `min(${maxPx}px, ${menuMaxHeightPx}px)`,
+          overflowY: 'auto',
+          padding: opts.padding == null ? 14 : opts.padding,
+          background: TOK.surfaceStrong,
+          border: `1px solid ${TOK.hairline}`,
+          borderRadius: 18,
+          boxShadow: TOK.shadow,
+          color: TOK.ink,
+          backdropFilter: 'blur(22px) saturate(1.18)',
+          WebkitBackdropFilter: 'blur(22px) saturate(1.18)',
+          zIndex: fixed ? 75 : 2
+        }
+      }, children);
+    };
     const menuRow = (key, label, active, onClick, style = {}) => h('button', {
       key,
       onClick,
+      onPointerDown: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClick(e);
+      },
+      onMouseDown: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClick(e);
+      },
+      onTouchStart: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClick(e);
+      },
       style: {
         width: '100%',
         height: 42,
@@ -2080,13 +2131,13 @@ Respond with ONLY a JSON object:
       }
     }, h('span', { style: { width: 18, fontSize: 17, color: active ? TOK.cobalt : TOK.inkDim } }, active ? '✓' : ''), h('span', null, label));
     const fontMenu = popBase('font', 64, 278, fontChoices.map(f =>
-      menuRow(f.id, f.label, curFont === f.id, () => { this.applyStyle({ font: f.id }); this.closeToolbarMenu(); }, {
+      menuRow(f.id, f.label, curFont === f.id, () => { applyToolbarStyle({ font: f.id }); this.closeToolbarMenu(); }, {
         fontFamily: this.fontStack(f.id, this.state.script),
         fontSize: 14.5,
         fontWeight: 600
       })
-    ), { maxHeight: 'min(392px, calc(100vh - 120px))' });
-    const sizeMenu = popBase('size', 170, 250, [
+    ), { maxPx: 392 });
+    const sizeMenu = popBase('size', 136, 250, [
       ...sizePresets.map(([label, val]) => menuRow(label, label, nearestSize[0] === label, () => { this.applyScaleSelected(val); this.closeToolbarMenu(); })),
       h('div', { key: 'sep', style: { height: 1, background: mutedLine, margin: '12px -14px 14px' } }),
       h('label', { key: 'custom-wrap', style: { display: 'grid', gap: 8, color: TOK.inkSoft, fontSize: 12, fontWeight: 700 } },
@@ -2098,15 +2149,20 @@ Respond with ONLY a JSON object:
             inputMode: 'numeric',
             min: 8,
             max: 72,
-            value: fontPx,
+            value: this._sizeDraftText != null ? this._sizeDraftText : String(fontPx),
             'aria-label': 'Custom font size',
             onInput: (e) => {
-              const n = Math.max(8, Math.min(72, parseInt(e.target.value || '16', 10) || 16));
-              this.applyScaleSelected(n / 16);
+              const raw = e.target.value;
+              this._sizeDraftText = raw;
+              const parsed = parseInt(raw, 10);
+              if (!isNaN(parsed)) this.applyScaleSelected(Math.max(8, Math.min(72, parsed)) / 16);
+              else this.forceUpdate();
             },
-            onChange: (e) => {
+            onBlur: (e) => {
               const n = Math.max(8, Math.min(72, parseInt(e.target.value || '16', 10) || 16));
               this.applyScaleSelected(n / 16);
+              this._sizeDraftText = null;
+              this.forceUpdate();
             },
             style: {
               width: '100%',
@@ -2131,7 +2187,7 @@ Respond with ONLY a JSON object:
       ['hanziSegments', HanziSegmentIcon, 'Hanzi + wave'],
       ['segmentsOnly', ToneSegmentsIcon, 'Wave only']
     ];
-    const toneMenu = popBase('tone', 300, 230, toneOpts.map(([val, Comp, label]) =>
+    const toneMenu = popBase('tone', 214, 230, toneOpts.map(([val, Comp, label]) =>
       menuRow(val, label, this.state.canvasMode === val, () => this.setCanvasMode(val), { fontSize: 15 })
     ));
     const styleMenu = popBase('style', 0, 316, [
@@ -2140,7 +2196,7 @@ Respond with ONLY a JSON object:
           key: col,
           title: col,
           'aria-label': col,
-          onClick: () => this.applyStyle({ color: col }),
+          onClick: () => applyToolbarStyle({ color: col }),
           style: {
             width: 34,
             height: 34,
@@ -2173,8 +2229,8 @@ Respond with ONLY a JSON object:
           h('input', {
             type: 'color',
             value: block.color || this.state.defColor,
-            onInput: (e) => this.applyStyle({ color: e.target.value }),
-            onChange: (e) => this.applyStyle({ color: e.target.value }),
+            onInput: (e) => applyToolbarStyle({ color: e.target.value }),
+            onChange: (e) => applyToolbarStyle({ color: e.target.value }),
             style: { position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }
           })
         )
@@ -2187,30 +2243,14 @@ Respond with ONLY a JSON object:
           max: 900,
           step: 10,
           value: block.weight != null ? block.weight : this.state.defWeight,
-          onInput: (e) => this.applyStyle({ weight: parseInt(e.target.value, 10) || 700 }),
-          onChange: (e) => this.applyStyle({ weight: parseInt(e.target.value, 10) || 700 }),
+          onInput: (e) => applyToolbarStyle({ weight: parseInt(e.target.value, 10) || 700 }),
+          onChange: (e) => applyToolbarStyle({ weight: parseInt(e.target.value, 10) || 700 }),
           style: { flex: 1, accentColor: TOK.cobalt }
         })
       )
     ]);
-    const scriptToggle = h('button', {
-      key: 'script-toggle',
-      title: this.state.script === 'traditional' ? 'Traditional Chinese' : 'Simplified Chinese',
-      'aria-label': 'Toggle Simplified and Traditional Chinese',
-      onClick: () => this.setState(s => ({ script: s.script === 'traditional' ? 'simplified' : 'traditional', toolbarMenu: null })),
-      style: {
-        width: controlH,
-        height: controlH,
-        border: 'none',
-        borderRadius: 10,
-        background: dark2,
-        color: TOK.ink,
-        cursor: 'pointer',
-        fontSize: 15,
-        fontWeight: 800,
-        lineHeight: 1
-      }
-    }, currentScript);
+    const sizeShort = ({ Small: 'S', Medium: 'M', Large: 'L', 'Extra large': 'XL', Huge: 'XXL' }[nearestSize[0]] || nearestSize[0]);
+    const menuNodes = [styleMenu, fontMenu, sizeMenu, toneMenu];
     const bar = h('div', {
       key: 'size',
       className: 'tc-toolbar-row',
@@ -2222,28 +2262,30 @@ Respond with ONLY a JSON object:
         flexWrap: 'nowrap',
         minWidth: 0
       }
-    }, colorButton, divider('d0'), dropdownBtn('font', 'Font style', 'Aa', 72), divider('d1'), dropdownBtn('size', 'Text size', nearestSize[0], 116), scriptToggle, divider('d2'),
+    }, colorButton, divider('d0'), dropdownBtn('font', 'Font style', 'Aa', 72), divider('d1'), dropdownBtn('size', 'Text size', sizeShort, 58), divider('d2'),
       toolBtn(ToneWaveIcon, 'Tone', () => this.toggleToolbarMenu('tone'), { active: menu === 'tone' }),
       toolBtn(PenNib, 'Wave', () => this.toggleWaveEdit(), { disabled: !one, active: this.state.waveEditId === block.id }),
       divider('d3'),
       toolBtn(Copy, 'Duplicate', () => this.duplicate(), { iconOnly: true }),
-      toolBtn(Trash, 'Delete', () => this.del(), { iconOnly: true, danger: true }),
-      styleMenu, fontMenu, sizeMenu, toneMenu);
-    return h('div', {
-      key: 'tb',
+      toolBtn(Trash, 'Delete', () => this.del(), { iconOnly: true, danger: true }));
+    const toolbarShell = h('div', {
+      key: 'tb-shell',
       className: 'tc-bar',
+      ref: (el) => { if (el) this._toolbarRect = el.getBoundingClientRect(); },
       onMouseDown: (e) => e.stopPropagation(),
       style: {
-        position: 'absolute',
-        left: '50%',
-        bottom: '100%',
-        marginBottom: `${8 / z}px`,
-        transform: `translateX(-50%) scale(${1 / z})`,
-        transformOrigin: 'center bottom',
+        position: fixed ? 'fixed' : 'absolute',
+        left: fixed ? `${fixedLeft}px` : '50%',
+        top: fixed ? `${toolbarTopScreen}px` : 'auto',
+        bottom: fixed ? 'auto' : '100%',
+        zIndex: 60,
+        marginBottom: fixed ? 0 : `${8 / z}px`,
+        transform: fixed ? 'translateX(-50%)' : `translateX(-50%) scale(${1 / z})`,
+        transformOrigin: fixed ? 'center top' : 'center bottom',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        maxWidth: 'min(94vw, 608px)',
+        maxWidth: 'min(94vw, 548px)',
         padding: 5,
         background: dark,
         border: `1px solid ${TOK.hairline}`,
@@ -2256,6 +2298,7 @@ Respond with ONLY a JSON object:
         color: TOK.ink
       }
     }, bar);
+    return fixed ? h(React.Fragment, { key: 'tb' }, toolbarShell, ...menuNodes) : toolbarShell;
   }
 
   // SVG overlay of draggable control/end handles for Wave Edit, aligned to the block
@@ -2390,13 +2433,15 @@ Respond with ONLY a JSON object:
   }
 
   /* ---- mobile chrome: sheets, tone modes, motion, tap-to-add ---- */
-  openSheet(name) { this.setState({ activeSheet: name, toolbarMenu: null }); }
+  openSheet(name) { this.setState({ activeSheet: name, toolbarMenu: null, moreMenuOpen: false }); }
   closeSheet() { if (this.state.recording) this.stopDictation(); this.setState({ activeSheet: null }); }
-  toggleToolbarMenu(name) { this.setState(s => ({ toolbarMenu: s.toolbarMenu === name ? null : name, activeSheet: null })); }
-  closeToolbarMenu() { if (this.state.toolbarMenu) this.setState({ toolbarMenu: null }); }
+  toggleToolbarMenu(name) { this._sizeDraftText = null; this.setState(s => ({ toolbarMenu: s.toolbarMenu === name ? null : name, activeSheet: null, moreMenuOpen: false })); }
+  closeToolbarMenu() { this._sizeDraftText = null; if (this.state.toolbarMenu) this.setState({ toolbarMenu: null }); }
+  toggleMoreMenu() { this.setState(s => ({ moreMenuOpen: !s.moreMenuOpen, activeSheet: null, toolbarMenu: null })); }
+  closeMoreMenu() { if (this.state.moreMenuOpen) this.setState({ moreMenuOpen: false }); }
   setCanvasMode(m) { this.setState({ canvasMode: m, toolbarMenu: null }); }
   toggleEdgeJoints() { this.setState(s => ({ showEdgeJoints: !s.showEdgeJoints })); }
-  resetCanvas() { this.pushHistory(); this.setState({ blocks: [], selectedIds: [], drawGuides: [], editingId: null, activeSheet: null, toolbarMenu: null }); }
+  resetCanvas() { this.pushHistory(); this.setState({ blocks: [], selectedIds: [], drawGuides: [], editingId: null, activeSheet: null, toolbarMenu: null, moreMenuOpen: false }); }
   flash(msg) { this.setState({ toast: msg }); clearTimeout(this._toastT); this._toastT = setTimeout(() => this.setState({ toast: '' }), 1800); }
   share() { this.flash('Export coming soon'); }
   playMotion() {
@@ -2421,11 +2466,11 @@ Respond with ONLY a JSON object:
     }));
   }
   // dictation routed through the bottom sheet
-  dictateTap() { this.setState({ activeSheet: 'dictation' }); if (!this.state.recording) this.startDictation(); }
+  dictateTap() { this.setState({ activeSheet: 'dictation', moreMenuOpen: false }); if (!this.state.recording) this.startDictation(); }
   insertDictation() { this.stopDictation(); this.setState({ activeSheet: null }); }
   cancelDictation() {
     const id = this._recBlockId; this.stopDictation();
-    this.setState(s => ({ blocks: s.blocks.filter(b => b.id !== id), selectedIds: s.selectedIds.filter(x => x !== id), activeSheet: null, toolbarMenu: null }));
+    this.setState(s => ({ blocks: s.blocks.filter(b => b.id !== id), selectedIds: s.selectedIds.filter(x => x !== id), activeSheet: null, toolbarMenu: null, moreMenuOpen: false }));
   }
 
   renderVals() {
@@ -2451,7 +2496,7 @@ Respond with ONLY a JSON object:
     const bg = React.createElement('div', {
       key: 'bg', onMouseDown: (e) => this.onBgDown(e), onTouchStart: (e) => this.onBgTouchStart(e),
       onDoubleClick: (e) => { const p = this.toWorld(e.clientX, e.clientY); this.addTextBlockAt(p.x, p.y); },
-      style: { position: 'absolute', inset: 0, touchAction: 'none', cursor: panning ? 'grabbing' : (this._space ? 'grab' : 'default') }
+      style: { position: 'absolute', inset: 0, pointerEvents: this.state.toolbarMenu ? 'none' : 'auto', touchAction: 'none', cursor: panning ? 'grabbing' : (this._space ? 'grab' : 'default') }
     });
 
     // world layer: pan + zoom applied once; blocks live in world coordinates.
@@ -2473,8 +2518,15 @@ Respond with ONLY a JSON object:
     }) : null;
 
     const canvasContent = React.createElement('div', {
-      style: { position: 'absolute', inset: 0, overflow: 'hidden', userSelect: 'none', WebkitUserSelect: 'none' }
+      style: { position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: this.state.toolbarMenu ? 'none' : 'auto', userSelect: 'none', WebkitUserSelect: 'none' }
     }, grid, bg, world, marqueeEl);
+
+    const toolbarBlock = this.state.selectedIds.length ? this.state.blocks.find(b => b.id === this.state.selectedIds[0]) : null;
+    let textToolbar = null;
+    if (toolbarBlock && this.state.editingId !== toolbarBlock.id) {
+      const tbLay = this.layoutBlock(this.glyphsText(toolbarBlock.text), this.scaleMetrics(M, toolbarBlock.scale || 1), toolbarBlock.width, toolbarBlock.toneOverrides);
+      textToolbar = this.renderTextToolbar(toolbarBlock, tbLay.bbox, true);
+    }
 
     // current colour / weight shown in the toolbar = first selected block, else default
     const sel = this.state.blocks.filter(b => this.state.selectedIds.includes(b.id));
@@ -2571,6 +2623,7 @@ Respond with ONLY a JSON object:
 
     return {
       canvasContent,
+      textToolbar,
       framesBtnStyle,
       colorVal,
       weightVal,
@@ -2622,7 +2675,7 @@ Respond with ONLY a JSON object:
       const dis = !!opts.disabled, act = !!opts.active;
       const c = dis ? TOK.inkDim : (act ? TOK.cobaltDeep : TOK.ink);
       return h('button', {
-        key: label, disabled: dis, onClick: dis ? undefined : onClick, title: label,
+        key: label, className: 'tc-dock-item ' + (act ? 'is-active' : ''), disabled: dis, onClick: dis ? undefined : onClick, title: label,
         style: {
           flex: 1,
           minWidth: 0,
@@ -2649,10 +2702,19 @@ Respond with ONLY a JSON object:
     };
 
     // -- compact canvas controls ---------------------------------------------
+    const moreBackdrop = st.moreMenuOpen ? h('div', {
+      key: 'more-backdrop',
+      onMouseDown: () => this.closeMoreMenu(),
+      onTouchStart: () => this.closeMoreMenu(),
+      style: { position: 'fixed', inset: 0, zIndex: 49, pointerEvents: 'auto', background: 'transparent' }
+    }) : null;
+    const moreDropdown = st.moreMenuOpen ? this.renderMoreDropdown(h) : null;
+
     const topBar = h('div', {
       style: { position: 'absolute', top: 0, left: 0, right: 0, paddingTop: 'env(safe-area-inset-top)', display: 'flex', justifyContent: 'flex-end', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
     },
       h('div', { style: {
+        position: 'relative',
         pointerEvents: 'auto',
         marginTop: 10,
         marginRight: 10,
@@ -2671,7 +2733,8 @@ Respond with ONLY a JSON object:
       } },
         iconBtn(ArrowCounterClockwise, 'Undo', () => this.undo(), { disabled: !this._undo.length }),
         iconBtn(ArrowClockwise, 'Redo', () => this.redo(), { disabled: !this._redo.length }),
-        iconBtn(DotsThree, 'More', () => this.openSheet('more'), { active: st.activeSheet === 'more' })
+        iconBtn(DotsThree, 'More', () => this.toggleMoreMenu(), { active: st.moreMenuOpen }),
+        moreDropdown
       )
     );
 
@@ -2679,7 +2742,7 @@ Respond with ONLY a JSON object:
     const dock = h('div', {
       style: { position: 'absolute', left: 0, right: 0, bottom: 'calc(env(safe-area-inset-bottom) + 10px)', display: 'flex', justifyContent: 'center', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
     },
-      h('div', { style: {
+      h('div', { className: 'tc-dock-shell', style: {
         pointerEvents: 'auto',
         width: 'calc(100% - 24px)',
         maxWidth: 318,
@@ -2781,7 +2844,7 @@ Respond with ONLY a JSON object:
 
     return h('div', {
       style: { position: 'fixed', inset: 0, overflow: 'hidden', background: TOK.canvas, fontFamily: "-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Segoe UI',system-ui,sans-serif", color: TOK.ink, WebkitFontSmoothing: 'antialiased', textRendering: 'optimizeLegibility' }
-    }, v.canvasContent, empty, drawGuides, canvasDrawOverlay, topBar, dock, activeSheet, rewriteChip, waveTransformUi, drawChip, drawHint, toast);
+    }, v.canvasContent, empty, drawGuides, canvasDrawOverlay, v.textToolbar, moreBackdrop, topBar, dock, activeSheet, rewriteChip, waveTransformUi, drawChip, drawHint, toast);
   }
 
   // ---- sheet bodies ----------------------------------------------------------
@@ -2792,9 +2855,46 @@ Respond with ONLY a JSON object:
       case 'tone': return this.sheetTone(v, h, sheet);
       case 'style': return this.sheetStyle(v, h, sheet);
       case 'rewrite': return this.sheetRewrite(v, h, sheet);
-      case 'more': return this.sheetMore(v, h, sheet);
       default: return null;
     }
+  }
+
+  renderMoreDropdown(h) {
+    const actionRow = (Comp, label, onClick, danger) => h('button', {
+      key: label,
+      className: 'tc-menu-row',
+      onClick,
+      style: { color: danger ? TOK.rec : TOK.ink }
+    },
+      h('span', { className: 'tc-menu-row-label' }, h(Comp, { size: 18, color: danger ? TOK.rec : TOK.ink }), label)
+    );
+    return h('div', {
+      key: 'more-menu',
+      className: 'tc-more-menu',
+      onMouseDown: (e) => e.stopPropagation(),
+      onTouchStart: (e) => e.stopPropagation(),
+      role: 'menu',
+      'aria-label': 'More',
+      style: {
+        position: 'absolute',
+        top: 'calc(100% + 8px)',
+        right: 0,
+        width: 'min(312px, calc(100vw - 20px))',
+        padding: 8,
+        background: TOK.surfaceStrong,
+        border: `1px solid ${TOK.hairline}`,
+        borderRadius: 20,
+        boxShadow: '0 18px 48px rgba(57,43,24,0.14), 0 1px 2px rgba(57,43,24,0.08), inset 0 1px 0 rgba(255,255,255,0.72)',
+        backdropFilter: 'blur(26px) saturate(1.25)',
+        WebkitBackdropFilter: 'blur(26px) saturate(1.25)',
+        zIndex: 54
+      }
+    },
+      h('div', { style: { padding: '6px 8px 7px', fontSize: 12, fontWeight: 760, color: TOK.inkSoft } }, 'More'),
+      actionRow(Key, this.getAiKey() ? 'Browser AI Key · set' : 'AI Key · server default', () => { this.closeMoreMenu(); this.setAiKeyPrompt(); }),
+      actionRow(Trash, 'Reset Canvas', () => { this.closeMoreMenu(); if (typeof window !== 'undefined' && window.confirm('Clear the whole canvas?')) this.resetCanvas(); }, true),
+      actionRow(Info, 'About', () => { this.closeMoreMenu(); this.flash('Tone Canvas · Mandarin tone typography'); })
+    );
   }
 
   sectionHeader(h, Comp, text) {
@@ -2957,28 +3057,6 @@ Respond with ONLY a JSON object:
       );
     }
     return sheet('Rewrite by tone', body, () => this.closeSheet());
-  }
-
-  sheetMore(v, h, sheet) {
-    const st = this.state;
-    const toggleRow = (Comp, label, on, onClick) => h('button', { key: label, onClick,
-      style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '13px 6px', background: 'none', border: 'none', cursor: 'pointer' } },
-      h('span', { style: { display: 'flex', alignItems: 'center', gap: 11, color: TOK.ink, fontWeight: 500, fontSize: 15.5 } }, h(Comp, { size: 20, color: TOK.ink }), label),
-      h('span', { style: { width: 42, height: 26, borderRadius: 13, background: on ? TOK.accent : 'rgba(20,18,12,0.15)', position: 'relative' } },
-        h('span', { style: { position: 'absolute', top: 3, left: on ? 19 : 3, width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'left 0.15s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' } }))
-    );
-    const actionRow = (Comp, label, onClick, danger) => h('button', { key: label, onClick,
-      style: { display: 'flex', alignItems: 'center', gap: 11, width: '100%', padding: '13px 6px', background: 'none', border: 'none', cursor: 'pointer', color: danger ? TOK.rec : TOK.ink, fontWeight: 500, fontSize: 15.5 } },
-      h(Comp, { size: 20, color: danger ? TOK.rec : TOK.ink }), label);
-    const body = h('div', null,
-      toggleRow(ToneFrameIcon, 'Tone Frames', st.showFrames, () => this.setState(s => ({ showFrames: !s.showFrames }))),
-      toggleRow(EdgeJointsIcon, 'Edge Joints', st.showEdgeJoints, () => this.toggleEdgeJoints()),
-      h('div', { style: { height: 1, background: TOK.sep, margin: '6px 0' } }),
-      actionRow(Key, this.getAiKey() ? 'Browser AI Key · set' : 'AI Key · server default / optional browser fallback', () => this.setAiKeyPrompt()),
-      actionRow(Trash, 'Reset Canvas', () => { if (typeof window !== 'undefined' && window.confirm('Clear the whole canvas?')) this.resetCanvas(); }, true),
-      actionRow(Info, 'About', () => this.flash('Tone Canvas · Mandarin tone typography'))
-    );
-    return sheet('More', body, () => this.closeSheet());
   }
 
 }
