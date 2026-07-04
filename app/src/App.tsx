@@ -2567,10 +2567,13 @@ Respond with ONLY a JSON object:
   renderDictationBar(h) {
     const st = this.state;
     const BARS = 34;
+    const waveGray = '#8f8b83';   // neutral mid gray for the soundwave
+    // matches the dock pill height (shell padding + 1px border + content row)
+    const ROW = 57;
     const circle = (extra) => ({ width: 40, height: 40, borderRadius: '50%', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flex: '0 0 auto', ...extra });
     const bars = Array.from({ length: BARS }, (_, i) => h('div', {
       key: i,
-      style: { width: 3, height: 3, borderRadius: 2, background: TOK.cobalt, flex: '0 0 auto' }
+      style: { width: 3, height: 3, borderRadius: 2, background: waveGray, flex: '0 0 auto' }
     }));
     // Live waveform once the engine is capturing; otherwise a status line so the
     // user always sees why (starting up, or mic blocked) with cancel/insert still
@@ -2580,9 +2583,9 @@ Respond with ONLY a JSON object:
     const middle = capturing
       ? h('div', {
           ref: (el) => { this._waveBarsEl = el; },
-          style: { flex: 1, minWidth: 0, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'space-between', overflow: 'hidden' }
+          style: { flex: 1, minWidth: 0, height: ROW, paddingLeft: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', overflow: 'hidden' }
         }, bars)
-      : h('div', { style: { flex: 1, minWidth: 0, height: 36, display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' } },
+      : h('div', { style: { flex: 1, minWidth: 0, height: ROW, paddingLeft: 8, display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' } },
           h('span', { style: { width: 8, height: 8, borderRadius: '50%', flex: '0 0 auto', background: TOK.inkDim, animation: 'tc-pulse 1.2s ease-out infinite' } }),
           h('span', { style: { fontSize: 13, fontWeight: 600, color: TOK.inkSoft, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, status)
         );
@@ -2595,11 +2598,11 @@ Respond with ONLY a JSON object:
         style: {
           pointerEvents: 'auto',
           width: 'calc(100% - 24px)',
-          maxWidth: 340,
+          maxWidth: 318,
           display: 'flex',
           alignItems: 'center',
-          gap: 8,
-          padding: '6px 8px 6px 18px',
+          gap: 6,
+          padding: 6,
           background: TOK.surfaceStrong,
           border: `1px solid ${TOK.hairline}`,
           borderRadius: 24,
