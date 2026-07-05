@@ -6,6 +6,56 @@ button:focus { outline: none; }
 button:focus-visible { outline: 2px solid rgba(36,87,214,0.34); outline-offset: 2px; }
 ::selection { background: #cfe0ff; }
 
+.tc-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 46%, rgba(255,255,255,0.66), rgba(255,255,255,0) 43%),
+    linear-gradient(180deg, #f8f3ea 0%, #f3eee5 58%, #ece2d1 100%);
+  opacity: 1;
+  animation: tc-splash-in 420ms cubic-bezier(.2,.8,.2,1) both;
+  transition: opacity 560ms ease, transform 560ms cubic-bezier(.2,.8,.2,1), filter 560ms ease;
+}
+
+.tc-splash--exit {
+  opacity: 0;
+  transform: scale(1.018);
+  filter: blur(7px);
+}
+
+.tc-splash-mark {
+  width: min(74vw, 390px);
+  height: min(74vw, 390px);
+  display: block;
+  filter: drop-shadow(0 22px 42px rgba(53,34,1,0.12));
+  transform-origin: 50% 50%;
+  animation: tc-splash-mark-settle 1850ms cubic-bezier(.18,.88,.22,1) both;
+}
+
+.tc-splash-line {
+  --i: 0;
+  stroke: #352201;
+  stroke-width: 80;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  opacity: 0;
+  animation:
+    tc-splash-draw 860ms cubic-bezier(.2,.78,.2,1) forwards,
+    tc-splash-breathe 1500ms ease-in-out forwards;
+  animation-delay: calc(120ms + (var(--i) * 92ms)), calc(620ms + (var(--i) * 72ms));
+}
+
+.tc-splash-line-accent {
+  stroke: url(#tc-splash-ink);
+}
+
 .tc-bar {
   scrollbar-width: none;
 }
@@ -26,47 +76,50 @@ button:focus-visible { outline: 2px solid rgba(36,87,214,0.34); outline-offset: 
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Liquid-glass highlight: a single frosted lozenge that adopts the pill's
+   rounded outer shape (no repetitive boxy blue fill). Neutral + translucent so
+   it reads like native glass on the light dock. */
 .tc-dock-item::before {
   content: "";
   position: absolute;
-  inset: 5px;
-  border-radius: 15px;
-  background:
-    radial-gradient(circle at 50% 0%, rgba(255,255,255,0.88), rgba(255,255,255,0) 42%),
-    linear-gradient(180deg, rgba(36,87,214,0.13), rgba(36,87,214,0.055));
-  box-shadow: inset 0 0 0 1px rgba(36,87,214,0.13), 0 8px 20px rgba(36,87,214,0.10);
+  inset: 4px;
+  border-radius: 17px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.86), rgba(255,255,255,0.48));
+  box-shadow:
+    inset 0 1px 0.5px rgba(255,255,255,0.95),
+    inset 0 0 0 1px rgba(255,255,255,0.55),
+    inset 0 -6px 12px rgba(28,25,23,0.04),
+    0 3px 9px rgba(28,25,23,0.09),
+    0 1px 2px rgba(28,25,23,0.06);
   opacity: 0;
-  transform: translateY(3px) scale(0.94);
-  transition: opacity 160ms ease, transform 180ms cubic-bezier(.2,.8,.2,1);
+  transform: scale(0.9);
+  transition: opacity 200ms ease, transform 240ms cubic-bezier(.2,.85,.25,1);
   pointer-events: none;
   z-index: -1;
-}
-
-.tc-dock-item:hover:not(:disabled),
-.tc-dock-item:focus-visible:not(:disabled) {
-  transform: translateY(-2px);
 }
 
 .tc-dock-item:hover:not(:disabled)::before,
 .tc-dock-item:focus-visible:not(:disabled)::before,
 .tc-dock-item.is-active::before {
   opacity: 1;
-  transform: translateY(0) scale(1);
+  transform: scale(1);
 }
 
-.tc-dock-item:active:not(:disabled) {
-  transform: translateY(0) scale(0.97);
+.tc-dock-item.is-active:hover:not(:disabled)::before,
+.tc-dock-item.is-active:focus-visible:not(:disabled)::before {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.tc-dock-item:active:not(:disabled)::before {
+  transform: scale(0.98);
 }
 
 .tc-dock-item svg,
 .tc-dock-item span {
   position: relative;
   z-index: 1;
-  transition: transform 160ms ease, color 160ms ease;
-}
-
-.tc-dock-item:hover:not(:disabled) svg {
-  transform: translateY(-1px);
+  transition: color 160ms ease;
 }
 
 .tc-more-menu {
@@ -76,35 +129,35 @@ button:focus-visible { outline: 2px solid rgba(36,87,214,0.34); outline-offset: 
 
 .tc-menu-row {
   width: 100%;
-  min-height: 44px;
-  padding: 0 10px;
+  min-height: 46px;
+  padding: 5px 9px 5px 6px;
   border: none;
   border-radius: 13px;
   background: transparent;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  font-size: 14px;
+  gap: 10px;
+  font-size: 14.5px;
   font-weight: 650;
   text-align: left;
   cursor: pointer;
-  transition: background 140ms ease, transform 140ms ease;
+  transition: background 140ms ease, transform 120ms ease;
 }
 
 .tc-menu-row:hover,
 .tc-menu-row:focus-visible {
-  background: rgba(46,39,27,0.065);
+  background: rgba(46,39,27,0.055);
 }
 
 .tc-menu-row:active {
-  transform: scale(0.985);
+  transform: scale(0.982);
 }
 
 .tc-menu-row-label {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   min-width: 0;
   line-height: 1.2;
 }
@@ -113,6 +166,28 @@ button:focus-visible { outline: 2px solid rgba(36,87,214,0.34); outline-offset: 
   0%   { box-shadow: 0 0 0 0 rgba(255,255,255,0.65); }
   70%  { box-shadow: 0 0 0 7px rgba(255,255,255,0); }
   100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
+}
+
+@keyframes tc-splash-in {
+  from { opacity: 0; transform: scale(0.992); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes tc-splash-mark-settle {
+  0% { transform: scale(0.965); }
+  58% { transform: scale(1.012); }
+  100% { transform: scale(1); }
+}
+
+@keyframes tc-splash-draw {
+  0% { opacity: 0; stroke-dashoffset: 1; }
+  14% { opacity: 1; }
+  100% { opacity: 1; stroke-dashoffset: 0; }
+}
+
+@keyframes tc-splash-breathe {
+  0%, 100% { stroke-width: 80; }
+  45% { stroke-width: 88; }
 }
 
 @keyframes tc-menu-in {
@@ -124,6 +199,21 @@ button:focus-visible { outline: 2px solid rgba(36,87,214,0.34); outline-offset: 
    while searching for matching text (Bending Tones). */
 @keyframes tc-breathe { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.85; } }
 @keyframes tc-sweep   { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -220; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .tc-splash,
+  .tc-splash-mark,
+  .tc-splash-line {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+  }
+
+  .tc-splash-line {
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+}
 
 /* On phones/tablets the toolbar can't fit one row — let it scroll horizontally,
    and hide the desktop-only keyboard hint bar. */

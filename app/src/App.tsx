@@ -12,7 +12,7 @@ import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import {
   ArrowCounterClockwise, ArrowClockwise, DotsThree,
   TextT, Microphone, SlidersHorizontal, Palette, TextAa,
-  X, Check, Info, Trash, PenNib, Sparkle, Key, Copy, PencilSimple, CaretDown,
+  X, Check, Info, Trash, PenNib, Sparkle, Key, Copy, PencilSimple, CaretRight,
 } from '@phosphor-icons/react';
 import { ToneWaveIcon, HanziSegmentIcon, ToneSegmentsIcon } from './ToneIcons';
 
@@ -43,7 +43,49 @@ TOK.accentSoft = TOK.cobaltSoft;
 TOK.rec = TOK.vermilion;
 // radius scale (px)
 const R = { sm: 9, md: 12, lg: 15, xl: 18, pill: 999, sheet: 22 };
+const APP_VERSION = '0.1.0';
 const COLOR_CHIPS = ['#1c1917', '#ef4444', '#f97316', '#eab308', '#22c55e', '#0ea5e9', '#2563eb', '#8b5cf6', '#ec4899', '#ffffff'];
+const CUSTOM_COLOR_MAP = [
+  '#111827', '#ef4444', '#f97316', '#eab308', '#22c55e', '#0ea5e9',
+  '#2563eb', '#8b5cf6', '#ec4899', '#64748b', '#f8fafc', '#ffffff',
+  '#7f1d1d', '#9a3412', '#713f12', '#14532d', '#134e4a', '#1e3a8a',
+  '#4c1d95', '#831843', '#2f2a20', '#8f5d2a', '#c084fc', '#fb7185'
+];
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
+const normHex = (value) => {
+  const raw = String(value || '').trim().replace(/^#/, '').replace(/[^0-9a-f]/gi, '').slice(0, 6);
+  return raw.length === 6 ? `#${raw.toLowerCase()}` : null;
+};
+const hexToRgb = (value) => {
+  const hex = normHex(value) || '#1c1917';
+  const n = parseInt(hex.slice(1), 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+};
+const rgbToHsv = ({ r, g, b }) => {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  let h = 0;
+  if (d) {
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  return { h, s: max === 0 ? 0 : d / max, v: max };
+};
+const hsvToHex = (h, s, v) => {
+  h = ((h % 360) + 360) % 360; s = clamp01(s); v = clamp01(v);
+  const c = v * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = v - c;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) [r, g, b] = [c, x, 0];
+  else if (h < 120) [r, g, b] = [x, c, 0];
+  else if (h < 180) [r, g, b] = [0, c, x];
+  else if (h < 240) [r, g, b] = [0, x, c];
+  else if (h < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  return '#' + [r, g, b].map(n => Math.round((n + m) * 255).toString(16).padStart(2, '0')).join('');
+};
 
 const pinyinPro = { pinyin };
 const OpenCC = (OpenCCImport && OpenCCImport.Converter)
@@ -530,7 +572,7 @@ export default class App extends React.Component {
       if (this.state.showFrames) this.debugFrame(s, id, MB).forEach(f => frames.push(f));
     });
     const segs = (showSeg || motion)
-      ? this.toneWaveLines(specs, TOK.ink, segOnly ? 0.95 : 0.9, segOnly ? 0.05 : 0.09, `seg-${block.id}`, MB, segOnly ? 0 : this.toneGuideYOffset(MB))
+      ? this.toneWaveLines(specs, faceFill, segOnly ? 0.95 : 0.9, segOnly ? 0.05 : 0.09, `seg-${block.id}`, MB, segOnly ? 0 : this.toneGuideYOffset(MB), { skipPunct: true })
       : [];
     // auto-morph: soften the glyphs while searching, sharpen the new ones in
     const xf = this.state.waveXform;
@@ -567,32 +609,39 @@ export default class App extends React.Component {
   }
   toneWaveLines(specs, color, opacity, widthMul, key, M, offsetY = 0, opts = {}) {
     const h = React.createElement;
-    const w = M.FS * (widthMul || 0.05);
+    const weightFactor = M.weight ? Math.max(0.5, Math.min(1.4, 0.5 + ((M.weight - 100) / 800) * 0.9)) : 1;
+    const w = M.FS * (widthMul || 0.05) * weightFactor;
     const byLine = new Map();
     (specs || []).forEach(s => {
-      if (s.punct && opts.skipPunct) return;
       const line = s.line || 0;
       if (!byLine.has(line)) byLine.set(line, []);
       byLine.get(line).push(s);
     });
-    return Array.from(byLine.entries()).map(([line, lineSpecs]) => {
-      const pts = [];
-      lineSpecs.sort((a, b) => a.sx - b.sx).forEach((s, idx) => {
-        const sp = this.specTonePoints(s, offsetY);
-        if (idx === 0) pts.push(...sp);
-        else pts.push(...sp);
+    const lines = [];
+    Array.from(byLine.entries()).forEach(([line, lineSpecs]) => {
+      let pts = [];
+      let part = 0;
+      const flush = () => {
+        if (pts.length < 2) { pts = []; return; }
+        lines.push(h('polyline', {
+          key: `${key}-${line}-${part++}`,
+          points: pts.map(p => `${p.x},${p.y}`).join(' '),
+          fill: 'none',
+          stroke: color,
+          strokeOpacity: opacity,
+          strokeWidth: w,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round'
+        }));
+        pts = [];
+      };
+      lineSpecs.sort((a, b) => a.sx - b.sx).forEach((s) => {
+        if (s.punct && opts.skipPunct) { flush(); return; }
+        pts.push(...this.specTonePoints(s, offsetY));
       });
-      return h('polyline', {
-        key: `${key}-${line}`,
-        points: pts.map(p => `${p.x},${p.y}`).join(' '),
-        fill: 'none',
-        stroke: color,
-        strokeOpacity: opacity,
-        strokeWidth: w,
-        strokeLinecap: 'round',
-        strokeLinejoin: 'round'
-      });
+      flush();
     });
+    return lines;
   }
 
   // a single clean tone-segment line for a spec (debug / fallback)
@@ -634,10 +683,17 @@ export default class App extends React.Component {
     activeSheet: null,       // null | 'dictation' | 'tone' | 'style' | 'motion'
     moreMenuOpen: false,     // top-right three-dot dropdown
     toolbarMenu: null,       // null | contextual second-level toolbar menu
+    customColorOpen: false,  // expanded in-toolbar custom colour map
+    customPickerHue: null,
+    customPickerSat: null,
+    customPickerVal: null,
+    customColorText: null,
     canvasMode: 'hanziSegments', // 'hanzi' | 'hanziSegments' | 'segmentsOnly' | 'motionPreview'
     motionPlaying: false,    // Motion preview animation in progress
     motionSpeed: 1,          // 0.5 | 1 | 2
     motionLoop: false,
+    splashVisible: true,
+    splashExiting: false,
     showEdgeJoints: false,   // draw the seam dot where glyph cells meet
     toast: '',               // transient status message
     waveEditId: null,        // block id currently in Wave Edit mode
@@ -679,7 +735,15 @@ export default class App extends React.Component {
     window.addEventListener('touchend', this._onTouchEnd);
     window.addEventListener('touchcancel', this._onTouchEnd);
     this.ensureUsedFonts();
-    this.centerView();   // center the default text in the viewport on load
+    this._splashExitT = setTimeout(() => this.setState({ splashExiting: true }), 1900);
+    this._splashDoneT = setTimeout(() => this.setState({ splashVisible: false }), 2550);
+    // Fit the default block to the viewport on phones, then center it.
+    const d = this._blockDefaults();
+    if (d.scale) {
+      this.setState(s => ({ blocks: s.blocks.map(b => (b.id === 1 ? { ...b, ...d } : b)) }), () => this.centerView());
+    } else {
+      this.centerView();   // center the default text in the viewport on load
+    }
   }
   // pan so the first block sits centered in the visible canvas (slightly biased
   // up to clear the bottom tool dock)
@@ -701,6 +765,8 @@ export default class App extends React.Component {
     window.removeEventListener('touchmove', this._onTouchMove, { passive: false });
     window.removeEventListener('touchend', this._onTouchEnd);
     window.removeEventListener('touchcancel', this._onTouchEnd);
+    clearTimeout(this._splashExitT);
+    clearTimeout(this._splashDoneT);
     if (this._recog) { try { this._recog.onend = null; this._recog.stop(); } catch (e) {} this._recog = null; }
   }
 
@@ -748,7 +814,7 @@ export default class App extends React.Component {
     if (e.button !== 0) return;
     // left-drag on empty space -> marquee box-select; a plain click adds text
     this._act = { type: 'maybe-marquee', sx: e.clientX, sy: e.clientY, add: e.shiftKey, base: e.shiftKey ? this.state.selectedIds.slice() : [], moved: false, hadSel: this.state.selectedIds.length > 0 };
-    if (!e.shiftKey && this.state.selectedIds.length) this.setState({ selectedIds: [], waveEditId: null, drawMode: false, drawPath: null, toolbarMenu: null });
+    if (!e.shiftKey && this.state.selectedIds.length) this.setState({ selectedIds: [], waveEditId: null, drawMode: false, drawPath: null, toolbarMenu: null, customColorOpen: false });
   }
   onBlockDown(e, id) {
     if (e.button === 1 || (e.button === 0 && this._space)) return; // let bg pan
@@ -1516,7 +1582,7 @@ Respond with ONLY a JSON object:
     if (e.touches.length >= 1) { this._pinch = null; this._act = null; return; }  // pinch -> fewer fingers: reset
     this._pinch = null;
     const a = this._act;
-    if (a && a.type === 'pan' && !a.moved) this.setState({ selectedIds: [] });     // tap empty -> deselect
+    if (a && a.type === 'pan' && !a.moved) this.setState({ selectedIds: [], waveEditId: null, toolbarMenu: null, customColorOpen: false, customColorText: null });     // tap empty -> deselect
     this.onUp({});
   }
   finishEdit(id) {
@@ -1609,13 +1675,23 @@ Respond with ONLY a JSON object:
     });
   }
   // create an empty, editable text block at the centre of the screen
+  // On phones a scale-1 block (70px glyphs) overflows the viewport and never
+  // wraps to the screen, so new blocks default to a smaller scale and an
+  // explicit wrap width that fits ~90% of the visible width. Desktop keeps the
+  // full-size, auto-wrap behaviour.
+  _blockDefaults() {
+    const W = (typeof window !== 'undefined' && window.innerWidth) || 0;
+    if (!W || W >= 640) return {};
+    const z = this.state.zoom || 1;
+    return { scale: 0.5, width: Math.round((W * 0.9) / z) };
+  }
   addTextBlock() {
     const id = this._nextId++;
     const c = this.toWorld(window.innerWidth / 2, window.innerHeight / 2);
     this.pushHistory();
     this._editDirty = true; // creation already recorded; don't double on first keystroke
     this.setState(s => ({
-      blocks: [...s.blocks, { id, x: c.x - 20, y: c.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont }],
+      blocks: [...s.blocks, { id, x: c.x - 20, y: c.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...this._blockDefaults() }],
       selectedIds: [id], editingId: id, addMenuOpen: false
     }));
   }
@@ -1633,7 +1709,7 @@ Respond with ONLY a JSON object:
     const c = this.toWorld(window.innerWidth / 2, window.innerHeight / 2);
     this.pushHistory();
     this.setState(s => ({
-      blocks: [...s.blocks, { id, x: c.x - 150, y: c.y, text: this.randomSample(), color: s.defColor, weight: s.defWeight, font: s.defFont }],
+      blocks: [...s.blocks, { id, x: c.x - 150, y: c.y, text: this.randomSample(), color: s.defColor, weight: s.defWeight, font: s.defFont, ...this._blockDefaults() }],
       selectedIds: [id], addMenuOpen: false
     }));
   }
@@ -1692,7 +1768,7 @@ Respond with ONLY a JSON object:
     this.pushHistory();
     this._recBase = '';
     this.setState(s => ({
-      blocks: [...s.blocks, { id, x: c.x - 150, y: c.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont }],
+      blocks: [...s.blocks, { id, x: c.x - 150, y: c.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...this._blockDefaults() }],
       selectedIds: [id], editingId: id, recording: true, recStatus: 'Listening…'
     }));
     this._startWaveViz();
@@ -1752,7 +1828,7 @@ Respond with ONLY a JSON object:
     this.pushHistory();
     this._recBase = ''; this._nativePartial = ''; this._nativeStt = true;
     this.setState(s => ({
-      blocks: [...s.blocks, { id, x: c.x - 150, y: c.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont }],
+      blocks: [...s.blocks, { id, x: c.x - 150, y: c.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...this._blockDefaults() }],
       selectedIds: [id], editingId: id, recording: true, recStatus: 'Starting…'
     }));
     this._startWaveViz();
@@ -2032,19 +2108,7 @@ Respond with ONLY a JSON object:
     const dark = TOK.surfaceStrong;
     const dark2 = 'rgba(46,39,27,0.075)';
     const mutedLine = TOK.hairline;
-    const scale = block.scale || 1;
-    const fontPx = Math.max(8, Math.min(72, Math.round(16 * scale)));
-    const sizePresets = [
-      ['Small', 0.72],
-      ['Medium', 1],
-      ['Large', 1.35],
-      ['Extra large', 1.75],
-      ['Huge', 2.25]
-    ];
-    const nearestSize = sizePresets.reduce((a, b) => Math.abs(b[1] - scale) < Math.abs(a[1] - scale) ? b : a, sizePresets[1]);
-    const fontChoices = App.FONTS;
-    const curFont = block.font || this.state.defFont;
-    const customColors = [...COLOR_CHIPS, '#6b7280'];
+    const customColors = ['#1c1917', '#ef4444', '#f97316', '#eab308', '#22c55e', '#0ea5e9'];
     const currentColor = (block.color || this.state.defColor || '#1c1917').toLowerCase();
     const controlH = 34;
     const applyToolbarStyle = (patch) => this.applyStyleFromToolbar(block.id, patch);
@@ -2055,11 +2119,10 @@ Respond with ONLY a JSON object:
     const viewportW = typeof window !== 'undefined' ? window.innerWidth : 740;
     const viewportH = typeof window !== 'undefined' ? window.innerHeight : 720;
     const fixedLeft = Math.max(16, Math.min(viewportW - 16, screenLeft));
-    const fixedToolbarW = Math.min(468, viewportW * 0.94);
+    const fixedToolbarW = Math.min(254, viewportW * 0.94);
     const toolBtn = (Comp, label, onClick, opts = {}) => {
       const active = !!opts.active, disabled = !!opts.disabled;
       const color = disabled ? TOK.inkDim : (opts.danger ? TOK.rec : (active ? TOK.cobaltDeep : TOK.ink));
-      const showLabel = !opts.iconOnly;
       return h('button', {
         key: label,
         title: label,
@@ -2068,12 +2131,12 @@ Respond with ONLY a JSON object:
         onClick: disabled ? undefined : onClick,
         style: {
           height: controlH,
-          minWidth: showLabel ? 54 : controlH,
-          padding: showLabel ? '0 8px' : 0,
+          width: controlH,
+          minWidth: controlH,
+          padding: 0,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          gap: 5,
           border: 'none',
           borderRadius: 10,
           background: active ? dark2 : 'transparent',
@@ -2085,41 +2148,9 @@ Respond with ONLY a JSON object:
           whiteSpace: 'nowrap'
         }
       },
-        h(Comp, { size: 16, color, weight: active ? 'fill' : 'regular' }),
-        showLabel ? h('span', null, label) : null
+        h(Comp, { size: 17, color, weight: active ? 'fill' : 'regular' })
       );
     };
-    const chevron = (key) => h(CaretDown, {
-      key,
-      size: 12,
-      color: TOK.ink,
-      weight: 'bold',
-      style: { display: 'block', flex: '0 0 auto', opacity: 0.82 }
-    });
-    const dropdownBtn = (key, label, value, width) => h('button', {
-      key,
-      title: label,
-      'aria-label': label,
-      onClick: () => this.toggleToolbarMenu(key),
-      style: {
-        height: controlH,
-        minWidth: width,
-        padding: '0 10px',
-        border: 'none',
-        borderRadius: 10,
-        background: menu === key ? dark2 : 'transparent',
-        color: TOK.ink,
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 10,
-        fontSize: 13,
-        fontWeight: 600,
-        lineHeight: 1,
-        whiteSpace: 'nowrap'
-      }
-    }, h('span', { style: { display: 'flex', alignItems: 'center', lineHeight: 1 } }, value), chevron(key + '-chev'));
     const colorButton = h('button', {
       key: 'style',
       title: 'Style',
@@ -2127,8 +2158,9 @@ Respond with ONLY a JSON object:
       onClick: () => this.toggleToolbarMenu('style'),
       style: {
         height: controlH,
-        minWidth: 42,
-        padding: '0 8px',
+        width: controlH,
+        minWidth: controlH,
+        padding: 0,
         border: 'none',
         borderRadius: 10,
         background: menu === 'style' ? dark2 : 'transparent',
@@ -2136,12 +2168,11 @@ Respond with ONLY a JSON object:
         cursor: 'pointer',
         display: 'flex',
         alignItems: 'center',
-        gap: 7,
+        justifyContent: 'center',
         lineHeight: 1
       }
     },
-      h('span', { style: { width: 20, height: 20, borderRadius: '50%', border: '2px solid rgba(46,39,27,0.16)', background: block.color || this.state.defColor, boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.34)' } }),
-      chevron('style-chev')
+      h('span', { style: { width: 20, height: 20, borderRadius: '50%', border: '2px solid rgba(46,39,27,0.16)', background: block.color || this.state.defColor, boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.34)' } })
     );
     const divider = (key) => h('div', { key, style: { width: 1, height: 30, background: mutedLine, margin: '0 3px', flex: '0 0 auto' } });
     const popBase = (key, left, width, children, opts = {}) => {
@@ -2211,113 +2242,199 @@ Respond with ONLY a JSON object:
         ...style
       }
     }, h('span', { style: { width: 18, fontSize: 17, color: active ? TOK.cobalt : TOK.inkDim } }, active ? '✓' : ''), h('span', null, label));
-    const fontMenu = popBase('font', 64, 278, fontChoices.map(f =>
-      menuRow(f.id, f.label, curFont === f.id, () => { applyToolbarStyle({ font: f.id }); this.closeToolbarMenu(); }, {
-        fontFamily: this.fontStack(f.id, this.state.script),
-        fontSize: 14.5,
-        fontWeight: 600
-      })
-    ), { maxPx: 392 });
-    const sizeMenu = popBase('size', 136, 250, [
-      ...sizePresets.map(([label, val]) => menuRow(label, label, nearestSize[0] === label, () => { this.applyScaleSelected(val); this.closeToolbarMenu(); })),
-      h('div', { key: 'sep', style: { height: 1, background: mutedLine, margin: '12px -14px 14px' } }),
-      h('label', { key: 'custom-wrap', style: { display: 'grid', gap: 8, color: TOK.inkSoft, fontSize: 12, fontWeight: 700 } },
-        h('span', null, 'Font size'),
-        h('div', { style: { position: 'relative' } },
-          h('input', {
-            key: 'custom',
-            type: 'number',
-            inputMode: 'numeric',
-            min: 8,
-            max: 72,
-            value: this._sizeDraftText != null ? this._sizeDraftText : String(fontPx),
-            'aria-label': 'Custom font size',
-            onInput: (e) => {
-              const raw = e.target.value;
-              this._sizeDraftText = raw;
-              const parsed = parseInt(raw, 10);
-              if (!isNaN(parsed)) this.applyScaleSelected(Math.max(8, Math.min(72, parsed)) / 16);
-              else this.forceUpdate();
-            },
-            onBlur: (e) => {
-              const n = Math.max(8, Math.min(72, parseInt(e.target.value || '16', 10) || 16));
-              this.applyScaleSelected(n / 16);
-              this._sizeDraftText = null;
-              this.forceUpdate();
-            },
-            style: {
-              width: '100%',
-              height: 40,
-              boxSizing: 'border-box',
-              padding: '0 42px 0 12px',
-              border: `2px solid ${TOK.cobalt}`,
-              borderRadius: 9,
-              outline: 'none',
-              background: TOK.paper,
-              color: TOK.ink,
-              fontSize: 17,
-              fontWeight: 500
-            }
-          }),
-          h('span', { style: { position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: TOK.inkDim, fontSize: 12, pointerEvents: 'none' } }, 'px')
-        )
-      )
-    ]);
     const toneOpts = [
       ['hanzi', TextT, 'Characters'],
       ['hanziSegments', HanziSegmentIcon, 'Hanzi + wave'],
       ['segmentsOnly', ToneSegmentsIcon, 'Wave only']
     ];
-    const toneMenu = popBase('tone', 214, 230, toneOpts.map(([val, Comp, label]) =>
+    const toneMenu = popBase('tone', 42, 230, toneOpts.map(([val, Comp, label]) =>
       menuRow(val, label, this.state.canvasMode === val, () => this.setCanvasMode(val), { fontSize: 15 })
     ));
-    const styleMenu = popBase('style', 0, 316, [
-      h('div', { key: 'colors', style: { display: 'grid', gridTemplateColumns: 'repeat(6, 34px)', gap: 10, marginBottom: 16 } },
+    const customColorSelected = CUSTOM_COLOR_MAP.some(col => col.toLowerCase() === currentColor);
+    const seedHsv = rgbToHsv(hexToRgb(currentColor));
+    const pickerHue = this.state.customPickerHue == null ? seedHsv.h : this.state.customPickerHue;
+    const pickerSat = this.state.customPickerSat == null ? seedHsv.s : this.state.customPickerSat;
+    const pickerVal = this.state.customPickerVal == null ? seedHsv.v : this.state.customPickerVal;
+    const hueColor = hsvToHex(pickerHue, 1, 1);
+    const applyCustomColor = (hex, next = {}) => {
+      const clean = normHex(hex);
+      if (!clean) return;
+      applyToolbarStyle({ color: clean });
+      this.setState({ customColorText: clean.toUpperCase(), ...next });
+    };
+    const setSvFromEvent = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const r = e.currentTarget.getBoundingClientRect();
+      const s = clamp01((e.clientX - r.left) / r.width);
+      const v = clamp01(1 - ((e.clientY - r.top) / r.height));
+      applyCustomColor(hsvToHex(pickerHue, s, v), { customPickerSat: s, customPickerVal: v });
+    };
+    const customPalette = this.state.customColorOpen ? h('div', {
+      key: 'custom-palette',
+      onPointerDown: (e) => e.stopPropagation(),
+      onMouseDown: (e) => e.stopPropagation(),
+      onTouchStart: (e) => e.stopPropagation(),
+      style: {
+        display: 'grid',
+        gap: 8,
+        padding: 10,
+        margin: '-2px 0 12px',
+        borderRadius: 15,
+        border: `1px solid ${TOK.hairline}`,
+        background: 'rgba(255,252,244,0.72)',
+        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.55)'
+      }
+    },
+      h('div', { key: 'compact-color-row', style: { display: 'grid', gridTemplateColumns: '86px minmax(0, 1fr)', alignItems: 'center', gap: 8 } },
+        h('input', {
+          key: 'hex',
+          value: this.state.customColorText == null ? currentColor.toUpperCase() : this.state.customColorText,
+          spellCheck: false,
+          'aria-label': 'Hex color',
+          onInput: (e) => {
+            const raw = e.target.value.toUpperCase().replace(/[^#0-9A-F]/g, '').slice(0, 7);
+            const text = raw.startsWith('#') ? raw : `#${raw.replace(/^#/, '')}`;
+            const clean = normHex(text);
+            this.setState({ customColorText: text });
+            if (clean) {
+              const hsv = rgbToHsv(hexToRgb(clean));
+              applyCustomColor(clean, { customPickerHue: hsv.h, customPickerSat: hsv.s, customPickerVal: hsv.v });
+            }
+          },
+          onBlur: () => this.setState({ customColorText: null }),
+          onMouseDown: (e) => e.stopPropagation(),
+          style: {
+            width: 86,
+            height: 30,
+            boxSizing: 'border-box',
+            border: `1px solid ${TOK.hairline}`,
+            borderRadius: 9,
+            background: 'rgba(255,255,255,0.56)',
+            color: TOK.ink,
+            padding: '0 8px',
+            fontSize: 12,
+            fontWeight: 750,
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            outline: 'none'
+          }
+        }),
+        h('div', {
+          key: 'hue-wrap',
+          style: { position: 'relative', height: 12, borderRadius: 999, overflow: 'hidden', border: `1px solid ${TOK.hairline}`, background: 'linear-gradient(90deg,#ff0000,#ffff00,#00ff00,#00ffff,#0000ff,#ff00ff,#ff0000)' }
+        },
+          h('input', {
+            type: 'range',
+            min: 0,
+            max: 360,
+            step: 1,
+            value: Math.round(pickerHue),
+            'aria-label': 'Hue',
+            onInput: (e) => {
+              const hue = parseFloat(e.target.value) || 0;
+              applyCustomColor(hsvToHex(hue, pickerSat, pickerVal), { customPickerHue: hue });
+            },
+            style: { position: 'absolute', inset: -8, width: 'calc(100% + 16px)', opacity: 0, cursor: 'pointer' }
+          }),
+          h('span', {
+            style: {
+              position: 'absolute',
+              left: `calc(${(pickerHue / 360) * 100}% - 5px)`,
+              top: '50%',
+              width: 10,
+              height: 10,
+              borderRadius: '50%',
+              transform: 'translateY(-50%)',
+              background: hueColor,
+              border: '2px solid #fff',
+              boxShadow: '0 1px 4px rgba(21,19,15,0.26)',
+              pointerEvents: 'none'
+            }
+          })
+        )
+      ),
+      h('div', {
+        key: 'sv',
+        role: 'slider',
+        'aria-label': 'Color saturation and brightness',
+        onPointerDown: setSvFromEvent,
+        onPointerMove: (e) => { if (e.buttons === 1) setSvFromEvent(e); },
+        style: {
+          position: 'relative',
+          height: 96,
+          borderRadius: 12,
+          overflow: 'hidden',
+          border: `1px solid ${TOK.hairline}`,
+          background: `linear-gradient(to top, #000, rgba(0,0,0,0)), linear-gradient(to right, #fff, ${hueColor})`,
+          cursor: 'crosshair',
+          touchAction: 'none'
+        }
+      },
+        h('span', {
+          style: {
+            position: 'absolute',
+            left: `calc(${pickerSat * 100}% - 7px)`,
+            top: `calc(${(1 - pickerVal) * 100}% - 7px)`,
+            width: 14,
+            height: 14,
+            borderRadius: '50%',
+            background: currentColor,
+            border: '2px solid #fff',
+            boxShadow: '0 0 0 1px rgba(21,19,15,0.28), 0 2px 6px rgba(21,19,15,0.22)',
+            pointerEvents: 'none'
+          }
+        })
+      )
+    ) : null;
+    const styleMenu = popBase('style', 0, 272, [
+      h('div', { key: 'colors', style: { display: 'grid', gridTemplateColumns: 'repeat(7, 28px)', gap: 7, marginBottom: 12 } },
         customColors.map(col => h('button', {
           key: col,
           title: col,
           'aria-label': col,
           onClick: () => applyToolbarStyle({ color: col }),
           style: {
-            width: 34,
-            height: 34,
+            width: 28,
+            height: 28,
             borderRadius: '50%',
             border: currentColor === col.toLowerCase() ? `3px solid ${TOK.cobalt}` : '2px solid rgba(46,39,27,0.16)',
             background: col,
             cursor: 'pointer'
           }
         })),
-        h('label', {
+        h('button', {
           key: 'custom-color',
           title: 'Custom color',
           'aria-label': 'Custom color',
+          onClick: (e) => {
+            e.stopPropagation();
+            const hsv = rgbToHsv(hexToRgb(currentColor));
+            this.setState(s => ({
+              customColorOpen: !s.customColorOpen,
+              customPickerHue: hsv.h,
+              customPickerSat: hsv.s,
+              customPickerVal: hsv.v,
+              customColorText: currentColor.toUpperCase()
+            }));
+          },
           style: {
             position: 'relative',
-            width: 34,
-            height: 34,
+            width: 28,
+            height: 28,
             borderRadius: '50%',
-            border: customColors.includes(currentColor) ? '2px solid rgba(46,39,27,0.16)' : `3px solid ${TOK.cobalt}`,
+            border: (!customColors.includes(currentColor) && (this.state.customColorOpen || customColorSelected)) ? `3px solid ${TOK.cobalt}` : '2px solid rgba(46,39,27,0.16)',
             background: 'conic-gradient(#ef4444, #f97316, #eab308, #22c55e, #0ea5e9, #2563eb, #8b5cf6, #ec4899, #ef4444)',
             boxSizing: 'border-box',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
+            display: 'block',
             cursor: 'pointer',
-            overflow: 'hidden'
+            overflow: 'hidden',
+            padding: 0
           }
-        },
-          h(Palette, { size: 15, color: '#fff', weight: 'fill', style: { filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.55))' } }),
-          h('input', {
-            type: 'color',
-            value: block.color || this.state.defColor,
-            onInput: (e) => applyToolbarStyle({ color: e.target.value }),
-            onChange: (e) => applyToolbarStyle({ color: e.target.value }),
-            style: { position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }
-          })
-        )
+        })
       ),
-      h('div', { key: 'weight', style: { display: 'flex', alignItems: 'center', gap: 10 } },
-        h('span', { style: { fontSize: 13, color: TOK.inkSoft, width: 44 } }, 'Weight'),
+      customPalette,
+      h('div', { key: 'weight', style: { display: 'flex', alignItems: 'center', gap: 10, width: 'fit-content' } },
+        h('span', { style: { fontSize: 13, color: TOK.inkSoft, width: 42 } }, 'Weight'),
         h('input', {
           type: 'range',
           min: 100,
@@ -2326,12 +2443,11 @@ Respond with ONLY a JSON object:
           value: block.weight != null ? block.weight : this.state.defWeight,
           onInput: (e) => applyToolbarStyle({ weight: parseInt(e.target.value, 10) || 700 }),
           onChange: (e) => applyToolbarStyle({ weight: parseInt(e.target.value, 10) || 700 }),
-          style: { flex: 1, accentColor: TOK.cobalt }
+          style: { width: 148, flex: '0 0 148px', accentColor: TOK.cobalt }
         })
       )
     ]);
-    const sizeShort = ({ Small: 'S', Medium: 'M', Large: 'L', 'Extra large': 'XL', Huge: 'XXL' }[nearestSize[0]] || nearestSize[0]);
-    const menuNodes = [styleMenu, fontMenu, sizeMenu, toneMenu];
+    const menuNodes = [styleMenu, toneMenu];
     const bar = h('div', {
       key: 'size',
       className: 'tc-toolbar-row',
@@ -2343,10 +2459,10 @@ Respond with ONLY a JSON object:
         flexWrap: 'nowrap',
         minWidth: 0
       }
-    }, colorButton, divider('d0'), dropdownBtn('font', 'Font style', 'Aa', 72), divider('d1'), dropdownBtn('size', 'Text size', sizeShort, 58), divider('d2'),
+    }, colorButton, divider('d0'),
       toolBtn(ToneWaveIcon, 'Tone', () => this.toggleToolbarMenu('tone'), { active: menu === 'tone' }),
       toolBtn(PenNib, 'Wave', () => this.toggleWaveEdit(), { disabled: !one, active: this.state.waveEditId === block.id }),
-      divider('d3'),
+      divider('d1'),
       toolBtn(Copy, 'Duplicate', () => this.duplicate(), { iconOnly: true }),
       toolBtn(Trash, 'Delete', () => this.del(), { iconOnly: true, danger: true }));
     const toolbarShell = h('div', {
@@ -2395,7 +2511,7 @@ Respond with ONLY a JSON object:
     const handleStroke = TOK.cobalt;
     const handleFill = TOK.paper;
     const endFill = TOK.cobalt;
-    this.toneWaveLines(specs, guideStroke, 0.95, 0.045, `guide-${block.id}`, MB, guideOffsetY).forEach(el => els.push(el));
+    this.toneWaveLines(specs, guideStroke, 0.95, 0.045, `guide-${block.id}`, MB, guideOffsetY, { skipPunct: true }).forEach(el => els.push(el));
     specs.forEach(s => {
       if (s.punct) return;
       const p0 = { x: s.sx, y: s.sy };
@@ -2514,11 +2630,11 @@ Respond with ONLY a JSON object:
   }
 
   /* ---- mobile chrome: sheets, tone modes, motion, tap-to-add ---- */
-  openSheet(name) { this.setState({ activeSheet: name, toolbarMenu: null, moreMenuOpen: false }); }
+  openSheet(name) { this.setState({ activeSheet: name, toolbarMenu: null, moreMenuOpen: false, customColorOpen: false, customColorText: null }); }
   closeSheet() { if (this.state.recording) this.stopDictation(); this.setState({ activeSheet: null }); }
-  toggleToolbarMenu(name) { this._sizeDraftText = null; this.setState(s => ({ toolbarMenu: s.toolbarMenu === name ? null : name, activeSheet: null, moreMenuOpen: false })); }
-  closeToolbarMenu() { this._sizeDraftText = null; if (this.state.toolbarMenu) this.setState({ toolbarMenu: null }); }
-  toggleMoreMenu() { this.setState(s => ({ moreMenuOpen: !s.moreMenuOpen, activeSheet: null, toolbarMenu: null })); }
+  toggleToolbarMenu(name) { this._sizeDraftText = null; this.setState(s => ({ toolbarMenu: s.toolbarMenu === name ? null : name, activeSheet: null, moreMenuOpen: false, customColorOpen: false, customColorText: null })); }
+  closeToolbarMenu() { this._sizeDraftText = null; if (this.state.toolbarMenu || this.state.customColorOpen) this.setState({ toolbarMenu: null, customColorOpen: false, customColorText: null }); }
+  toggleMoreMenu() { this.setState(s => ({ moreMenuOpen: !s.moreMenuOpen, activeSheet: null, toolbarMenu: null, customColorOpen: false, customColorText: null })); }
   closeMoreMenu() { if (this.state.moreMenuOpen) this.setState({ moreMenuOpen: false }); }
   setCanvasMode(m) { this.setState({ canvasMode: m, toolbarMenu: null }); }
   toggleEdgeJoints() { this.setState(s => ({ showEdgeJoints: !s.showEdgeJoints })); }
@@ -2641,7 +2757,7 @@ Respond with ONLY a JSON object:
     const bg = React.createElement('div', {
       key: 'bg', onMouseDown: (e) => this.onBgDown(e), onTouchStart: (e) => this.onBgTouchStart(e),
       onDoubleClick: (e) => { const p = this.toWorld(e.clientX, e.clientY); this.addTextBlockAt(p.x, p.y); },
-      style: { position: 'absolute', inset: 0, pointerEvents: this.state.toolbarMenu ? 'none' : 'auto', touchAction: 'none', cursor: panning ? 'grabbing' : (this._space ? 'grab' : 'default') }
+      style: { position: 'absolute', inset: 0, pointerEvents: 'auto', touchAction: 'none', cursor: panning ? 'grabbing' : (this._space ? 'grab' : 'default') }
     });
 
     // world layer: pan + zoom applied once; blocks live in world coordinates.
@@ -2663,7 +2779,7 @@ Respond with ONLY a JSON object:
     }) : null;
 
     const canvasContent = React.createElement('div', {
-      style: { position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: this.state.toolbarMenu ? 'none' : 'auto', userSelect: 'none', WebkitUserSelect: 'none' }
+      style: { position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'auto', userSelect: 'none', WebkitUserSelect: 'none' }
     }, grid, bg, world, marqueeEl);
 
     const toolbarBlock = this.state.selectedIds.length ? this.state.blocks.find(b => b.id === this.state.selectedIds[0]) : null;
@@ -2794,31 +2910,36 @@ Respond with ONLY a JSON object:
     // -- small building blocks -------------------------------------------------
     const iconBtn = (Comp, label, onClick, opts = {}) => {
       const dis = !!opts.disabled, act = !!opts.active;
-      const c = dis ? TOK.inkDim : (opts.danger ? TOK.rec : (act ? TOK.cobalt : TOK.inkSoft));
+      const c = dis ? TOK.inkDim : (opts.danger ? TOK.rec : (act ? TOK.ink : TOK.inkSoft));
+      // active (menu toggled open) = a pressed frosted-glass key, matching the
+      // dock's liquid-glass language rather than a flat blue tint.
+      const activeBg = 'linear-gradient(180deg, rgba(255,255,255,0.9), rgba(255,255,255,0.5))';
+      const activeShadow = 'inset 0 1px 0.5px rgba(255,255,255,0.95), inset 0 0 0 1px rgba(46,39,27,0.09), 0 2px 5px rgba(57,43,24,0.10)';
       return h('button', {
         key: label, 'aria-label': label, title: label, disabled: dis,
         onClick: dis ? undefined : onClick,
-        onMouseEnter: (e) => { if (!dis) e.currentTarget.style.background = act ? TOK.cobaltSoft : 'rgba(46,39,27,0.055)'; },
-        onMouseLeave: (e) => { e.currentTarget.style.background = act ? TOK.accentSoft : 'transparent'; },
+        onMouseEnter: (e) => { if (!dis && !act) e.currentTarget.style.background = 'rgba(46,39,27,0.06)'; },
+        onMouseLeave: (e) => { if (!act) e.currentTarget.style.background = 'transparent'; },
         style: {
           width: 36,
           height: 36,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: act ? TOK.accentSoft : 'transparent',
+          background: act ? activeBg : 'transparent',
+          boxShadow: act ? activeShadow : 'none',
           border: 'none',
           borderRadius: R.md,
           color: c,
           cursor: dis ? 'default' : 'pointer',
-          transition: 'background 0.15s, color 0.15s, transform 0.15s',
+          transition: 'background 0.18s ease, box-shadow 0.18s ease, color 0.18s ease, transform 0.12s ease',
           opacity: dis ? 0.42 : 1
         }
-      }, h(Comp, { size: 19, color: c, weight: act ? 'fill' : 'regular' }));
+      }, h(Comp, { size: 19, color: c, weight: act ? 'bold' : 'regular' }));
     };
     const dockItem = (Comp, label, onClick, opts = {}) => {
       const dis = !!opts.disabled, act = !!opts.active;
-      const c = dis ? TOK.inkDim : (act ? TOK.cobaltDeep : TOK.ink);
+      const c = dis ? TOK.inkDim : TOK.ink;
       return h('button', {
         key: label, className: 'tc-dock-item ' + (act ? 'is-active' : ''), disabled: dis, onClick: dis ? undefined : onClick, title: label,
         style: {
@@ -2832,16 +2953,15 @@ Respond with ONLY a JSON object:
           gap: 5,
           padding: '8px 6px',
           margin: '0 1px',
-          background: act ? 'linear-gradient(180deg, rgba(36,87,214,0.13), rgba(36,87,214,0.075))' : 'transparent',
-          border: act ? '1px solid rgba(36,87,214,0.18)' : '1px solid transparent',
-          borderRadius: 17,
+          background: 'transparent',
+          border: 'none',
+          borderRadius: 18,
           color: c,
           cursor: dis ? 'default' : 'pointer',
-          transition: 'background 0.15s, border-color 0.15s, transform 0.15s',
           opacity: dis ? 0.45 : 1
         }
       },
-        h(Comp, { size: 22, color: c, weight: act ? 'fill' : 'regular' }),
+        h(Comp, { size: 22, color: c, weight: act ? 'duotone' : 'regular' }),
         h('span', { style: { fontSize: 11.5, fontWeight: act ? 700 : 600, letterSpacing: 0, lineHeight: 1 } }, label)
       );
     };
@@ -2987,10 +3107,82 @@ Respond with ONLY a JSON object:
 
     // -- toast -----------------------------------------------------------------
     const toast = st.toast ? h('div', { key: 'toast', style: { position: 'fixed', left: '50%', bottom: 'calc(100px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', background: TOK.ink, color: '#fff', fontSize: 13, fontWeight: 600, padding: '9px 15px', borderRadius: R.md, zIndex: 90, boxShadow: '0 8px 24px rgba(28,25,23,0.28)' } }, st.toast) : null;
+    const splash = st.splashVisible ? this.renderSplash(h) : null;
 
     return h('div', {
       style: { position: 'fixed', inset: 0, overflow: 'hidden', background: TOK.canvas, fontFamily: "-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Segoe UI',system-ui,sans-serif", color: TOK.ink, WebkitFontSmoothing: 'antialiased', textRendering: 'optimizeLegibility' }
-    }, v.canvasContent, empty, drawGuides, canvasDrawOverlay, v.textToolbar, moreBackdrop, topBar, dock, activeSheet, rewriteChip, waveTransformUi, drawChip, drawHint, toast);
+    }, v.canvasContent, empty, drawGuides, canvasDrawOverlay, v.textToolbar, moreBackdrop, topBar, dock, activeSheet, rewriteChip, waveTransformUi, drawChip, drawHint, toast, splash);
+  }
+
+  // Static app mark — the same connected tone-wave used by the splash, drawn
+  // as a small rounded tile for menus / the About sheet.
+  brandMark(h, size = 28) {
+    const uid = 'bm' + Math.round(size);
+    const stroke = (key, d, accent) => h('path', { key, d, pathLength: 1, fill: 'none', stroke: accent ? `url(#${uid}-ink)` : '#352201', strokeWidth: 80, strokeLinecap: 'round', strokeLinejoin: 'round' });
+    return h('svg', { width: size, height: size, viewBox: '0 0 1024 1024', fill: 'none', xmlns: 'http://www.w3.org/2000/svg', style: { flex: '0 0 auto', display: 'block' } },
+      h('defs', null,
+        h('clipPath', { id: uid + '-clip' }, h('rect', { width: 1024, height: 1024, rx: 224, fill: 'white' })),
+        h('linearGradient', { id: uid + '-ink', x1: 0, y1: 0, x2: 1024, y2: 1024, gradientUnits: 'userSpaceOnUse' },
+          h('stop', { offset: '0%', stopColor: '#352201' }),
+          h('stop', { offset: '58%', stopColor: '#2457d6' }),
+          h('stop', { offset: '100%', stopColor: '#d9472f' })
+        )
+      ),
+      h('g', { clipPath: `url(#${uid}-clip)` },
+        h('rect', { width: 1024, height: 1024, fill: '#F3EEE5' }),
+        stroke('a', 'M45.084 -44.9727L227.084 137.027L500.3 137.027L681.246 318.027'),
+        stroke('b', 'M-66 276H88.5L225.5 413L362.5 276'),
+        stroke('c', 'M12.0664 569.266H340.283L521.229 388.266L702.175 569.266L883.12 388.266L1064.07 569.266', true),
+        stroke('d', 'M660 59L827.772 226.953H1081.1L1267 413'),
+        stroke('e', 'M512 640L692.946 821L873.892 640', true),
+        stroke('f', 'M84 766H357.216L538.162 947'),
+        stroke('g', 'M66.0472 1087.95L234 920L401.772 1087.95H655.097L841 1274'),
+        stroke('h', 'M841 947L1042 746H1315.22L1496.16 927')
+      )
+    );
+  }
+  renderSplash(h) {
+    const line = (key, d, i, accent = false) => h('path', {
+      key,
+      className: 'tc-splash-line' + (accent ? ' tc-splash-line-accent' : ''),
+      d,
+      pathLength: 1,
+      style: { '--i': i }
+    });
+    return h('div', {
+      key: 'splash',
+      className: 'tc-splash' + (this.state.splashExiting ? ' tc-splash--exit' : ''),
+      'aria-hidden': 'true'
+    },
+      h('svg', {
+        className: 'tc-splash-mark',
+        width: 1024,
+        height: 1024,
+        viewBox: '0 0 1024 1024',
+        fill: 'none',
+        xmlns: 'http://www.w3.org/2000/svg'
+      },
+        h('defs', null,
+          h('clipPath', { id: 'tc-splash-clip' }, h('rect', { width: 1024, height: 1024, rx: 224, fill: 'white' })),
+          h('linearGradient', { id: 'tc-splash-ink', x1: 0, y1: 0, x2: 1024, y2: 1024, gradientUnits: 'userSpaceOnUse' },
+            h('stop', { offset: '0%', stopColor: '#352201' }),
+            h('stop', { offset: '58%', stopColor: '#2457d6' }),
+            h('stop', { offset: '100%', stopColor: '#d9472f' })
+          )
+        ),
+        h('g', { clipPath: 'url(#tc-splash-clip)' },
+          h('rect', { width: 1024, height: 1024, fill: '#F3EEE5' }),
+          line('low-left', 'M45.084 -44.9727L227.084 137.027L500.3 137.027L681.246 318.027', 0),
+          line('upper-left', 'M-66 276H88.5L225.5 413L362.5 276', 1),
+          line('middle-main', 'M12.0664 569.266H340.283L521.229 388.266L702.175 569.266L883.12 388.266L1064.07 569.266', 2, true),
+          line('upper-right', 'M660 59L827.772 226.953H1081.1L1267 413', 3),
+          line('center-fold', 'M512 640L692.946 821L873.892 640', 4, true),
+          line('lower-left', 'M84 766H357.216L538.162 947', 5),
+          line('lower-wave', 'M66.0472 1087.95L234 920L401.772 1087.95H655.097L841 1274', 6),
+          line('lower-right', 'M841 947L1042 746H1315.22L1496.16 927', 7)
+        )
+      )
+    );
   }
 
   // ---- sheet bodies ----------------------------------------------------------
@@ -3000,19 +3192,102 @@ Respond with ONLY a JSON object:
       case 'tone': return this.sheetTone(v, h, sheet);
       case 'style': return this.sheetStyle(v, h, sheet);
       case 'rewrite': return this.sheetRewrite(v, h, sheet);
+      case 'about': return this.sheetAbout(v, h, sheet);
       default: return null;
     }
   }
 
-  renderMoreDropdown(h) {
-    const actionRow = (Comp, label, onClick, danger) => h('button', {
+  sheetAbout(v, h, sheet) {
+    // A tiny tone-stroke glyph, one per tone class, for the legend.
+    const toneGlyph = (d, accent) => h('svg', { width: 34, height: 24, viewBox: '0 0 34 24', fill: 'none', style: { flex: '0 0 auto' } },
+      h('path', { d, stroke: accent ? TOK.cobalt : TOK.ink, strokeWidth: 3, strokeLinecap: 'round', strokeLinejoin: 'round', fill: 'none' }));
+    const tones = [
+      ['一', 'First', 'flat', 'M4 12 H30'],
+      ['ˊ', 'Second', 'rising', 'M4 20 L30 6'],
+      ['ˇ', 'Third', 'dipping', 'M4 7 L17 20 L30 9'],
+      ['ˋ', 'Fourth', 'falling', 'M4 6 L30 20']
+    ];
+    const toneCard = ([mark, name, kind, d], i) => h('div', { key: name, style: {
+      display: 'flex', flexDirection: 'column', gap: 6, padding: '11px 10px', borderRadius: 14,
+      background: 'rgba(255,255,255,0.4)', border: `1px solid ${TOK.hairline}`
+    } },
+      toneGlyph(d, i === 1 || i === 2),
+      h('div', { style: { fontSize: 11.5, fontWeight: 700, color: TOK.ink } }, name),
+      h('div', { style: { fontSize: 10.5, fontWeight: 600, color: TOK.inkSoft, letterSpacing: 0.2, textTransform: 'lowercase' } }, kind)
+    );
+
+    const body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 18, paddingBottom: 4 } },
+      // hero: mark + wordmark + tagline
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 14 } },
+        h('div', { style: { filter: 'drop-shadow(0 8px 18px rgba(53,34,1,0.14))' } }, this.brandMark(h, 60)),
+        h('div', { style: { display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 } },
+          h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' } },
+            h('span', { style: { fontSize: 22, fontWeight: 800, color: TOK.ink, letterSpacing: -0.2 } }, 'Tone Canvas'),
+            h('span', { style: { fontSize: 15, fontWeight: 600, color: TOK.inkSoft, fontFamily: "'Noto Sans SC', sans-serif" } }, '声调画布')
+          ),
+          h('div', { style: { fontSize: 12.5, fontWeight: 650, color: TOK.cobaltDeep } }, 'Mandarin tone typography')
+        )
+      ),
+      // intro
+      h('p', { style: { margin: 0, fontSize: 14, lineHeight: 1.62, color: TOK.inkSoft, fontWeight: 500 } },
+        'Type, paste, or dictate Chinese and each character becomes a geometric ',
+        h('span', { style: { color: TOK.ink, fontWeight: 700 } }, 'tone segment'),
+        ' — flat, rising, dipping, or falling — welded end to end so a whole sentence reads as one continuous, fully editable tone-wave. The geometry ',
+        h('span', { style: { fontStyle: 'italic', color: TOK.ink } }, 'is'),
+        ' the point.'
+      ),
+      // tone legend
+      h('div', null,
+        this.sectionHeader(h, ToneWaveIcon, 'The four tones'),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 } }, tones.map(toneCard))
+      ),
+      // credit footer
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, paddingTop: 14, borderTop: `1px solid ${TOK.sepSoft}` } },
+        h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
+          h('div', { style: { fontSize: 13, fontWeight: 750, color: TOK.ink } }, 'Designed & built by Nathan Guo'),
+          h('div', { style: { fontSize: 12, fontWeight: 600, color: TOK.inkSoft } }, '@yellingbytes')
+        ),
+        h('span', { style: { marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, color: TOK.inkDim, background: 'rgba(46,39,27,0.055)', padding: '4px 10px', borderRadius: 999 } }, `v${APP_VERSION}`)
+      )
+    );
+    return sheet('About', body, () => this.closeSheet());
+  }
+
+  // one settings-style row: a tinted icon tile, a label, and optional trailing
+  // content (a value chip or a chevron). `tint` chooses the tile accent.
+  menuRow(h, { Comp, label, onClick, tint = 'ink', trailing = null, danger = false }) {
+    const tintMap = {
+      ink: { fg: TOK.ink, bg: 'rgba(46,39,27,0.06)' },
+      cobalt: { fg: TOK.cobalt, bg: TOK.cobaltSoft },
+      danger: { fg: TOK.vermilion, bg: TOK.vermilionSoft }
+    };
+    const t = tintMap[danger ? 'danger' : tint];
+    return h('button', {
       key: label,
       className: 'tc-menu-row',
       onClick,
-      style: { color: danger ? TOK.rec : TOK.ink }
+      style: { color: danger ? TOK.vermilion : TOK.ink }
     },
-      h('span', { className: 'tc-menu-row-label' }, h(Comp, { size: 18, color: danger ? TOK.rec : TOK.ink }), label)
+      h('span', { className: 'tc-menu-row-label' },
+        h('span', { style: { width: 30, height: 30, flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, background: t.bg } },
+          h(Comp, { size: 17, color: t.fg, weight: 'regular' })),
+        h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, label)
+      ),
+      trailing
     );
+  }
+  renderMoreDropdown(h) {
+    const chip = (text, on) => h('span', {
+      style: {
+        flex: '0 0 auto', fontSize: 11.5, fontWeight: 700, letterSpacing: 0.1,
+        color: on ? TOK.cobaltDeep : TOK.inkSoft,
+        background: on ? TOK.cobaltSoft : 'rgba(46,39,27,0.055)',
+        padding: '3px 9px', borderRadius: 999
+      }
+    }, text);
+    const chevron = h(CaretRight, { size: 15, color: TOK.inkDim, weight: 'bold', style: { flex: '0 0 auto' } });
+    const hasKey = !!this.getAiKey();
+    const divider = h('div', { key: 'div', style: { height: 1, background: TOK.sepSoft, margin: '6px 8px' } });
     return h('div', {
       key: 'more-menu',
       className: 'tc-more-menu',
@@ -3024,21 +3299,27 @@ Respond with ONLY a JSON object:
         position: 'absolute',
         top: 'calc(100% + 8px)',
         right: 0,
-        width: 'min(312px, calc(100vw - 20px))',
-        padding: 8,
+        width: 'min(256px, calc(100vw - 20px))',
+        padding: 7,
         background: TOK.surfaceStrong,
         border: `1px solid ${TOK.hairline}`,
-        borderRadius: 20,
+        borderRadius: 18,
         boxShadow: '0 18px 48px rgba(57,43,24,0.14), 0 1px 2px rgba(57,43,24,0.08), inset 0 1px 0 rgba(255,255,255,0.72)',
         backdropFilter: 'blur(26px) saturate(1.25)',
         WebkitBackdropFilter: 'blur(26px) saturate(1.25)',
         zIndex: 54
       }
     },
-      h('div', { style: { padding: '6px 8px 7px', fontSize: 12, fontWeight: 760, color: TOK.inkSoft } }, 'More'),
-      actionRow(Key, this.getAiKey() ? 'Browser AI Key · set' : 'AI Key · server default', () => { this.closeMoreMenu(); this.setAiKeyPrompt(); }),
-      actionRow(Trash, 'Reset Canvas', () => { this.closeMoreMenu(); if (typeof window !== 'undefined' && window.confirm('Clear the whole canvas?')) this.resetCanvas(); }, true),
-      actionRow(Info, 'About', () => { this.closeMoreMenu(); this.flash('Tone Canvas · Mandarin tone typography'); })
+      // brand header: mark + wordmark + version, replacing the bare "More" label
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 9, padding: '5px 8px 8px' } },
+        this.brandMark(h, 24),
+        h('span', { style: { fontSize: 13.5, fontWeight: 780, color: TOK.ink, letterSpacing: 0.1 } }, 'Tone Canvas'),
+        h('span', { style: { marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: TOK.inkDim } }, `v${APP_VERSION}`)
+      ),
+      this.menuRow(h, { Comp: Info, label: 'About', tint: 'ink', trailing: chevron, onClick: () => { this.closeMoreMenu(); this.openSheet('about'); } }),
+      this.menuRow(h, { Comp: Key, label: 'AI key', tint: 'cobalt', trailing: chip(hasKey ? 'Set' : 'Server', hasKey), onClick: () => { this.closeMoreMenu(); this.setAiKeyPrompt(); } }),
+      divider,
+      this.menuRow(h, { Comp: Trash, label: 'Reset canvas', danger: true, onClick: () => { this.closeMoreMenu(); if (typeof window !== 'undefined' && window.confirm('Clear the whole canvas?')) this.resetCanvas(); } })
     );
   }
 
@@ -3082,12 +3363,10 @@ Respond with ONLY a JSON object:
       return h('button', { key: col, onClick: () => this.applyStyle({ color: col }), 'aria-label': col,
         style: { width: 30, height: 30, borderRadius: '50%', background: col, cursor: 'pointer', flex: '0 0 auto', border: col.toLowerCase() === '#ffffff' ? `1px solid ${TOK.sep}` : 'none', outline: sel ? `2px solid ${TOK.accent}` : 'none', outlineOffset: 2, transform: sel ? 'scale(1.08)' : 'none', transition: 'transform 0.12s' } });
     };
+    const customSheetColors = CUSTOM_COLOR_MAP.filter(col => !COLOR_CHIPS.some(base => base.toLowerCase() === col.toLowerCase()));
     const colorRow = h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
       COLOR_CHIPS.map(chip),
-      h('label', { title: 'Custom color', style: { width: 30, height: 30, borderRadius: '50%', border: `1px dashed ${TOK.inkDim}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', position: 'relative', color: TOK.inkSoft } },
-        h(Palette, { size: 15, color: TOK.inkSoft }),
-        h('input', { type: 'color', value: v.colorVal, onInput: v.setColor, onChange: v.setColor, style: { position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' } })
-      )
+      customSheetColors.map(chip)
     );
     // Weight
     const weightRow = h('div', { style: { display: 'flex', alignItems: 'center', gap: 12 } },
