@@ -905,7 +905,11 @@ export default class App extends React.Component {
     if (e.button !== 0) return;
     // left-drag on empty space -> marquee box-select; a plain click adds text
     this._act = { type: 'maybe-marquee', sx: e.clientX, sy: e.clientY, add: e.shiftKey, base: e.shiftKey ? this.state.selectedIds.slice() : [], moved: false, hadSel: this.state.selectedIds.length > 0 };
-    if (!e.shiftKey && this.state.selectedIds.length) this.setState({ selectedIds: [], waveEditId: null, drawMode: false, drawPath: null, toolbarMenu: null, customColorOpen: false });
+    // Deselect on tap-away, but don't kill an active pen tool (Wave Edit's
+    // individual-tone handles, or freehand draw mode) — those stay on until
+    // the user explicitly toggles the Draw button off, so a single stray tap
+    // elsewhere on the canvas doesn't instantly cancel the tool they just opened.
+    if (!e.shiftKey && this.state.selectedIds.length) this.setState({ selectedIds: [], toolbarMenu: null, customColorOpen: false });
   }
   onBlockDown(e, id) {
     if (this.isPanButton(e)) { e.stopPropagation(); this.startPan(e); return; }
@@ -1685,7 +1689,8 @@ Respond with ONLY a JSON object:
     if (e.touches.length >= 1) { this._pinch = null; this._act = null; return; }  // pinch -> fewer fingers: reset
     this._pinch = null;
     const a = this._act;
-    if (a && a.type === 'pan' && !a.moved) this.setState({ selectedIds: [], waveEditId: null, toolbarMenu: null, customColorOpen: false, customColorText: null });     // tap empty -> deselect
+    // Deselect on tap-away, but (as in onBgDown) don't kill an active pen tool.
+    if (a && a.type === 'pan' && !a.moved) this.setState({ selectedIds: [], toolbarMenu: null, customColorOpen: false, customColorText: null });     // tap empty -> deselect
     this.onUp({});
   }
   finishEdit(id) {
@@ -3137,7 +3142,11 @@ Respond with ONLY a JSON object:
         dockItem(TextT, this.t('dock_text'), () => this.addTextBlock()),
         dockItem(Microphone, this.t('dock_dictate'), () => this.dictateTap(), { active: st.recording || st.activeSheet === 'dictation' }),
         dockItem(PencilSimple, this.t('dock_draw'), () => {
-          if (st.selectedIds.length === 1) this.toggleWaveEdit();
+          // Tapping Draw again while a pen tool is already active always turns
+          // it off explicitly — the only intended way to exit now that a
+          // stray tap elsewhere on the canvas no longer cancels it.
+          if (st.drawMode || st.waveEditId != null) this.setState({ drawMode: false, waveEditId: null, drawPath: null });
+          else if (st.selectedIds.length === 1) this.toggleWaveEdit();
           else this.togglePencil();
         }, { active: st.drawMode || st.waveEditId != null })
       )
