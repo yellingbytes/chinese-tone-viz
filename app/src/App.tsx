@@ -525,9 +525,13 @@ export default class App extends React.Component {
       }
     }
 
-    // bbox over segment points (pad covers the glyph body). A fixed-width box also
-    // spans at least the wrap width so the box + handle sit at the wrap boundary.
-    const pad = FS * 0.72 + 10;
+    // bbox over segment points (pad covers the glyph body). Vertical padding stays
+    // generous — the tone wave dips/rises well past the glyph's own em box — but
+    // horizontal padding is just breathing room beside the first/last character,
+    // so it can be much tighter. A fixed-width box also spans at least the wrap
+    // width so the box + handle sit at the wrap boundary.
+    const padX = FS * 0.22 + 6;
+    const padY = FS * 0.72 + 10;
     let minX = 0, minY = 0, maxX = FS, maxY = 0;
     if (all.length) {
       minX = Infinity; minY = Infinity; maxX = -Infinity; maxY = -Infinity;
@@ -542,7 +546,7 @@ export default class App extends React.Component {
     return {
       specs: all,
       naturalWidth,
-      bbox: { x: minX - pad, y: minY - pad, w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2 }
+      bbox: { x: minX - padX, y: minY - padY, w: (maxX - minX) + padX * 2, h: (maxY - minY) + padY * 2 }
     };
   }
 
@@ -961,9 +965,13 @@ export default class App extends React.Component {
   applyScale(id, s, cx, cy) {
     s = Math.max(0.25, Math.min(6, s));
     const b = this.state.blocks.find(x => x.id === id); if (!b) return;
-    const { bbox } = this.layoutBlock(this.glyphsText(b.text), this.scaleMetrics(this.metrics(), s), b.width);
+    // An explicit wrap width (user-dragged handle) is in absolute world units, so
+    // without this it stays put while the font size changes — the wrap box no
+    // longer matches the text's new size. Scale it by the same factor as the text.
+    const newWidth = b.width != null ? b.width * (s / (b.scale || 1)) : b.width;
+    const { bbox } = this.layoutBlock(this.glyphsText(b.text), this.scaleMetrics(this.metrics(), s), newWidth);
     const nx = cx - (bbox.x + bbox.w / 2), ny = cy - (bbox.y + bbox.h / 2);
-    this.setState(st => ({ blocks: st.blocks.map(x => x.id === id ? { ...x, scale: s, x: nx, y: ny } : x) }));
+    this.setState(st => ({ blocks: st.blocks.map(x => x.id === id ? { ...x, scale: s, width: newWidth, x: nx, y: ny } : x) }));
   }
   // scale every selected block to `s` about its own centre (Size presets)
   applyScaleSelected(s) {
