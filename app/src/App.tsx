@@ -907,12 +907,14 @@ export default class App extends React.Component {
   onBgDown(e) {
     if (this.isPanButton(e)) { this.startPan(e); return; }
     if (e.button !== 0) return;
+    // While a pen tool is active (Wave Edit handles, or freehand draw) an
+    // empty-canvas tap/drag is inert: it does NOT deselect the target block,
+    // marquee, or cancel the tool. This keeps the selection box, toolbar, and
+    // handles all visible so the tool clearly stays on — the only way out is
+    // the Draw button (or the freehand X). Pan still works via middle/right drag.
+    if (this.state.waveEditId != null || this.state.drawMode) { this._act = null; return; }
     // left-drag on empty space -> marquee box-select; a plain click adds text
     this._act = { type: 'maybe-marquee', sx: e.clientX, sy: e.clientY, add: e.shiftKey, base: e.shiftKey ? this.state.selectedIds.slice() : [], moved: false, hadSel: this.state.selectedIds.length > 0 };
-    // Deselect on tap-away, but don't kill an active pen tool (Wave Edit's
-    // individual-tone handles, or freehand draw mode) — those stay on until
-    // the user explicitly toggles the Draw button off, so a single stray tap
-    // elsewhere on the canvas doesn't instantly cancel the tool they just opened.
     if (!e.shiftKey && this.state.selectedIds.length) this.setState({ selectedIds: [], toolbarMenu: null, customColorOpen: false });
   }
   onBlockDown(e, id) {
@@ -1697,8 +1699,11 @@ Respond with ONLY a JSON object:
     if (e.touches.length >= 1) { this._pinch = null; this._act = null; return; }  // pinch -> fewer fingers: reset
     this._pinch = null;
     const a = this._act;
-    // Deselect on tap-away, but (as in onBgDown) don't kill an active pen tool.
-    if (a && a.type === 'pan' && !a.moved) this.setState({ selectedIds: [], toolbarMenu: null, customColorOpen: false, customColorText: null });     // tap empty -> deselect
+    // Tap-away deselects — but while a pen tool is active the tap is inert, so
+    // the target block stays selected and the tool (Wave Edit / freehand) stays
+    // on. Matches onBgDown; exit is only via the Draw button (or the freehand X).
+    const penActive = this.state.waveEditId != null || this.state.drawMode;
+    if (a && a.type === 'pan' && !a.moved && !penActive) this.setState({ selectedIds: [], toolbarMenu: null, customColorOpen: false, customColorText: null });
     this.onUp({});
   }
   finishEdit(id) {
