@@ -44,6 +44,82 @@ TOK.rec = TOK.vermilion;
 // radius scale (px)
 const R = { sm: 9, md: 12, lg: 15, xl: 18, pill: 999, sheet: 22 };
 const APP_VERSION = '0.1.0';
+
+// -- UI language (interface chrome only — typed/dictated Chinese content is
+// unaffected). Detected once from a saved choice or the browser/system
+// language, then toggle-able app-wide from the More menu. -----------------
+const UI_LANG_KEY = 'tc_ui_lang';
+const detectDefaultUiLang = () => {
+  try {
+    const saved = localStorage.getItem(UI_LANG_KEY);
+    if (saved === 'en' || saved === 'zh') return saved;
+  } catch (e) {}
+  const nav = (typeof navigator !== 'undefined' && (navigator.language || (navigator.languages || [])[0])) || '';
+  return /^zh/i.test(nav) ? 'zh' : 'en';
+};
+const STRINGS = {
+  dock_text: { en: 'Text', zh: '文字' },
+  dock_dictate: { en: 'Dictate', zh: '听写' },
+  dock_draw: { en: 'Draw', zh: '画线' },
+  empty_start: { en: 'Start with text or voice', zh: '用文字或语音开始' },
+  placeholder_type: { en: 'Type Chinese', zh: '输入中文' },
+  draw_hint: { en: 'Draw a tone line', zh: '画一条声调线' },
+  cancel: { en: 'Cancel', zh: '取消' },
+  close: { en: 'Close', zh: '关闭' },
+  insert: { en: 'Insert', zh: '插入' },
+  undo: { en: 'Undo', zh: '撤销' },
+  redo: { en: 'Redo', zh: '重做' },
+  more: { en: 'More', zh: '更多' },
+  about: { en: 'About', zh: '关于' },
+  ai_key: { en: 'AI key', zh: 'AI 密钥' },
+  key_set: { en: 'Set', zh: '已设置' },
+  key_server: { en: 'Server', zh: '服务器' },
+  reset_canvas: { en: 'Reset canvas', zh: '清空画布' },
+  confirm_reset: { en: 'Clear the whole canvas?', zh: '确定要清空整个画布吗？' },
+  about_tagline: { en: 'Mandarin tone typography', zh: '普通话声调排印' },
+  about_intro: {
+    en: 'Type, paste, or dictate Chinese and each character becomes a geometric tone segment — flat, rising, dipping, or falling — welded end to end so a whole sentence reads as one continuous, fully editable tone-wave. The geometry is the point.',
+    zh: '输入、粘贴或听写中文，每个汉字都会变成一个几何声调段——平、升、降升或降——首尾相连，让整句话成为一条连续、可编辑的声调波。声调即字形。'
+  },
+  four_tones: { en: 'The four tones', zh: '四个声调' },
+  tone_first: { en: 'First', zh: '一声' },
+  tone_second: { en: 'Second', zh: '二声' },
+  tone_third: { en: 'Third', zh: '三声' },
+  tone_fourth: { en: 'Fourth', zh: '四声' },
+  kind_flat: { en: 'flat', zh: '平' },
+  kind_rising: { en: 'rising', zh: '升' },
+  kind_dipping: { en: 'dipping', zh: '降升' },
+  kind_falling: { en: 'falling', zh: '降' },
+  credit_prefix: { en: 'Designed & built by', zh: '设计开发：' },
+  tone_mode_title: { en: 'Tone Mode', zh: '声调模式' },
+  tone_opt_hanzi_title: { en: 'Hanzi', zh: '汉字' },
+  tone_opt_hanzi_sub: { en: 'Characters only.', zh: '仅显示汉字。' },
+  tone_opt_hanziSeg_title: { en: 'Hanzi + Segments', zh: '汉字 + 声调波' },
+  tone_opt_hanziSeg_sub: { en: 'Characters riding the tone wave.', zh: '汉字随声调波起伏。' },
+  tone_opt_segOnly_title: { en: 'Segments Only', zh: '仅声调波' },
+  tone_opt_segOnly_sub: { en: 'Pure connected tone lines.', zh: '纯连续声调线条。' },
+  style_title: { en: 'Style', zh: '样式' },
+  section_size: { en: 'Size', zh: '字号' },
+  section_color: { en: 'Color', zh: '颜色' },
+  section_weight: { en: 'Weight', zh: '字重' },
+  section_font: { en: 'Font', zh: '字体' },
+  section_script: { en: 'Script', zh: '简繁' },
+  script_simplified: { en: '简 Simplified', zh: '简体' },
+  script_traditional: { en: '繁 Traditional', zh: '繁體' },
+  resize_tooltip: { en: 'Drag to resize', zh: '拖动以调整大小' },
+  wrap_explicit_tooltip: { en: 'Drag to set wrap width · double-click for auto width', zh: '拖动设置换行宽度 · 双击恢复自动宽度' },
+  wrap_auto_tooltip: { en: 'Drag left to wrap text', zh: '向左拖动以换行' },
+  toolbar_style: { en: 'Style', zh: '样式' },
+  toolbar_tone: { en: 'Tone', zh: '声调' },
+  toolbar_wave: { en: 'Wave', zh: '声调波' },
+  toolbar_duplicate: { en: 'Duplicate', zh: '复制' },
+  toolbar_delete: { en: 'Delete', zh: '删除' },
+  toolbar_weight: { en: 'Weight', zh: '字重' },
+  toolbar_custom_color: { en: 'Custom color', zh: '自定义颜色' },
+  tb_tone_characters: { en: 'Characters', zh: '汉字' },
+  tb_tone_hanziwave: { en: 'Hanzi + wave', zh: '汉字 + 声调波' },
+  tb_tone_waveonly: { en: 'Wave only', zh: '仅声调波' }
+};
 const COLOR_CHIPS = ['#1c1917', '#ef4444', '#f97316', '#eab308', '#22c55e', '#0ea5e9', '#2563eb', '#8b5cf6', '#ec4899', '#ffffff'];
 const CUSTOM_COLOR_MAP = [
   '#111827', '#ef4444', '#f97316', '#eab308', '#22c55e', '#0ea5e9',
@@ -684,6 +760,7 @@ export default class App extends React.Component {
     defWeight: 700,
     defFont: 'noto-sans',    // typeface applied to new blocks / shown in toolbar
     script: 'simplified',    // 'simplified' | 'traditional' — render-time glyph conversion
+    uiLang: detectDefaultUiLang(), // 'en' | 'zh' — interface chrome language, not the canvas content
     addMenuOpen: false,      // "+ Add Text" split-button dropdown
     recording: false,        // live Chinese dictation in progress (engine capturing)
     dictating: false,        // inline dictation bar is open (from tap until insert/cancel)
@@ -931,6 +1008,18 @@ export default class App extends React.Component {
         return { ...b, toneOverrides: ov };
       })
     }));
+  }
+
+  /* ---- UI language (app chrome only) ---- */
+  t(key) {
+    const entry = STRINGS[key];
+    if (!entry) return key;
+    return entry[this.state.uiLang] || entry.en;
+  }
+  setUiLang(lang) {
+    if (lang !== 'en' && lang !== 'zh') return;
+    try { localStorage.setItem(UI_LANG_KEY, lang); } catch (e) {}
+    this.setState({ uiLang: lang });
   }
 
   /* ---- Phase 2: AI rewrite by tone (OpenAI, direct from browser) ---- */
@@ -2008,7 +2097,7 @@ Respond with ONLY a JSON object:
         key: 'c' + s.left + s.top + s.right + s.bottom,
         onMouseDown: (e) => this.onScaleDown(e, block.id),
         onTouchStart: (e) => this.onScaleDown(e, block.id),
-        title: 'Drag to resize',
+        title: this.t('resize_tooltip'),
         style: {
           position: 'absolute',
           width: `${13 / zc}px`,
@@ -2036,7 +2125,7 @@ Respond with ONLY a JSON object:
           onMouseDown: (e) => this.onResizeDown(e, block.id),
           onTouchStart: (e) => this.onResizeTouchStart(e, block.id),
           onDoubleClick: (e) => { e.stopPropagation(); this.resetWidth(block.id); },
-          title: block.width != null ? 'Drag to set wrap width · double-click for auto width' : 'Drag left to wrap text',
+          title: block.width != null ? this.t('wrap_explicit_tooltip') : this.t('wrap_auto_tooltip'),
           style: {
             position: 'absolute', top: '10px', bottom: '10px', right: '-10px', width: '20px',
             cursor: 'ew-resize', pointerEvents: 'auto', touchAction: 'none', zIndex: 23,
@@ -2054,7 +2143,7 @@ Respond with ONLY a JSON object:
     if (empty && !editing) {
       children.push(React.createElement('div', {
         key: 'ph', style: { padding: '14px 20px', color: TOK.inkDim, fontSize: '15px', fontWeight: 500, letterSpacing: 0, whiteSpace: 'nowrap' }
-      }, '输入中文'));
+      }, this.t('placeholder_type')));
     } else {
       children.push(React.createElement('div', { key: 'svg', style: { position: 'absolute', left: 0, top: 0, pointerEvents: 'none' } }, this.renderBlockSvg(block, M)));
     }
@@ -2174,8 +2263,8 @@ Respond with ONLY a JSON object:
     };
     const colorButton = h('button', {
       key: 'style',
-      title: 'Style',
-      'aria-label': 'Style',
+      title: this.t('toolbar_style'),
+      'aria-label': this.t('toolbar_style'),
       onClick: () => this.toggleToolbarMenu('style'),
       style: {
         height: controlH,
@@ -2264,9 +2353,9 @@ Respond with ONLY a JSON object:
       }
     }, h('span', { style: { width: 18, fontSize: 17, color: active ? TOK.cobalt : TOK.inkDim } }, active ? '✓' : ''), h('span', null, label));
     const toneOpts = [
-      ['hanzi', TextT, 'Characters'],
-      ['hanziSegments', HanziSegmentIcon, 'Hanzi + wave'],
-      ['segmentsOnly', ToneSegmentsIcon, 'Wave only']
+      ['hanzi', TextT, this.t('tb_tone_characters')],
+      ['hanziSegments', HanziSegmentIcon, this.t('tb_tone_hanziwave')],
+      ['segmentsOnly', ToneSegmentsIcon, this.t('tb_tone_waveonly')]
     ];
     const toneMenu = popBase('tone', 42, 230, toneOpts.map(([val, Comp, label]) =>
       menuRow(val, label, this.state.canvasMode === val, () => this.setCanvasMode(val), { fontSize: 15 })
@@ -2425,8 +2514,8 @@ Respond with ONLY a JSON object:
         })),
         h('button', {
           key: 'custom-color',
-          title: 'Custom color',
-          'aria-label': 'Custom color',
+          title: this.t('toolbar_custom_color'),
+          'aria-label': this.t('toolbar_custom_color'),
           onClick: (e) => {
             e.stopPropagation();
             const hsv = rgbToHsv(hexToRgb(currentColor));
@@ -2455,7 +2544,7 @@ Respond with ONLY a JSON object:
       ),
       customPalette,
       h('div', { key: 'weight', style: { display: 'flex', alignItems: 'center', gap: 10, width: 'fit-content' } },
-        h('span', { style: { fontSize: 13, color: TOK.inkSoft, width: 42 } }, 'Weight'),
+        h('span', { style: { fontSize: 13, color: TOK.inkSoft, width: 42 } }, this.t('toolbar_weight')),
         h('input', {
           type: 'range',
           min: 100,
@@ -2481,11 +2570,11 @@ Respond with ONLY a JSON object:
         minWidth: 0
       }
     }, colorButton, divider('d0'),
-      toolBtn(ToneWaveIcon, 'Tone', () => this.toggleToolbarMenu('tone'), { active: menu === 'tone' }),
-      toolBtn(PenNib, 'Wave', () => this.toggleWaveEdit(), { disabled: !one, active: this.state.waveEditId === block.id }),
+      toolBtn(ToneWaveIcon, this.t('toolbar_tone'), () => this.toggleToolbarMenu('tone'), { active: menu === 'tone' }),
+      toolBtn(PenNib, this.t('toolbar_wave'), () => this.toggleWaveEdit(), { disabled: !one, active: this.state.waveEditId === block.id }),
       divider('d1'),
-      toolBtn(Copy, 'Duplicate', () => this.duplicate(), { iconOnly: true }),
-      toolBtn(Trash, 'Delete', () => this.del(), { iconOnly: true, danger: true }));
+      toolBtn(Copy, this.t('toolbar_duplicate'), () => this.duplicate(), { iconOnly: true }),
+      toolBtn(Trash, this.t('toolbar_delete'), () => this.del(), { iconOnly: true, danger: true }));
     const toolbarShell = h('div', {
       key: 'tb-shell',
       className: 'tc-bar',
@@ -2746,8 +2835,8 @@ Respond with ONLY a JSON object:
         }
       },
         middle,
-        h('button', { onClick: () => this.cancelDictation(), 'aria-label': 'Cancel dictation', title: 'Cancel', style: circle({ background: 'rgba(46,39,27,0.07)', color: TOK.inkSoft }) }, h(X, { size: 18, weight: 'bold' })),
-        h('button', { onClick: () => this.insertDictation(), 'aria-label': 'Insert dictation', title: 'Insert', style: circle({ background: TOK.ink, color: '#fff', boxShadow: '0 6px 16px rgba(21,19,15,0.22)' }) }, h(Check, { size: 18, weight: 'bold' }))
+        h('button', { onClick: () => this.cancelDictation(), 'aria-label': this.t('cancel'), title: this.t('cancel'), style: circle({ background: 'rgba(46,39,27,0.07)', color: TOK.inkSoft }) }, h(X, { size: 18, weight: 'bold' })),
+        h('button', { onClick: () => this.insertDictation(), 'aria-label': this.t('insert'), title: this.t('insert'), style: circle({ background: TOK.ink, color: '#fff', boxShadow: '0 6px 16px rgba(21,19,15,0.22)' }) }, h(Check, { size: 18, weight: 'bold' }))
       )
     );
   }
@@ -3014,9 +3103,9 @@ Respond with ONLY a JSON object:
         backdropFilter: 'blur(30px) saturate(1.35)',
         WebkitBackdropFilter: 'blur(30px) saturate(1.35)'
       } },
-        iconBtn(ArrowCounterClockwise, 'Undo', () => this.undo(), { disabled: !this._undo.length }),
-        iconBtn(ArrowClockwise, 'Redo', () => this.redo(), { disabled: !this._redo.length }),
-        iconBtn(DotsThree, 'More', () => this.toggleMoreMenu(), { active: st.moreMenuOpen }),
+        iconBtn(ArrowCounterClockwise, this.t('undo'), () => this.undo(), { disabled: !this._undo.length }),
+        iconBtn(ArrowClockwise, this.t('redo'), () => this.redo(), { disabled: !this._redo.length }),
+        iconBtn(DotsThree, this.t('more'), () => this.toggleMoreMenu(), { active: st.moreMenuOpen }),
         moreDropdown
       )
     );
@@ -3039,9 +3128,9 @@ Respond with ONLY a JSON object:
         backdropFilter: 'blur(24px) saturate(1.22)',
         WebkitBackdropFilter: 'blur(24px) saturate(1.22)'
       } },
-        dockItem(TextT, 'Text', () => this.addTextBlock()),
-        dockItem(Microphone, 'Dictate', () => this.dictateTap(), { active: st.recording || st.activeSheet === 'dictation' }),
-        dockItem(PencilSimple, 'Draw', () => {
+        dockItem(TextT, this.t('dock_text'), () => this.addTextBlock()),
+        dockItem(Microphone, this.t('dock_dictate'), () => this.dictateTap(), { active: st.recording || st.activeSheet === 'dictation' }),
+        dockItem(PencilSimple, this.t('dock_draw'), () => {
           if (st.selectedIds.length === 1) this.toggleWaveEdit();
           else this.togglePencil();
         }, { active: st.drawMode || st.waveEditId != null })
@@ -3056,8 +3145,8 @@ Respond with ONLY a JSON object:
     const empty = (!st.blocks.length) ? h('div', {
       style: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, pointerEvents: 'none', zIndex: 5 }
     },
-      h('div', { style: { fontSize: 15, fontWeight: 650, color: TOK.inkSoft, letterSpacing: 0 } }, 'Start with text or voice'),
-      h('div', { style: { display: 'flex', gap: 10, pointerEvents: 'auto' } }, pill(TextT, 'Text', () => this.addTextBlock()), pill(Microphone, 'Dictate', () => this.dictateTap()))
+      h('div', { style: { fontSize: 15, fontWeight: 650, color: TOK.inkSoft, letterSpacing: 0 } }, this.t('empty_start')),
+      h('div', { style: { display: 'flex', gap: 10, pointerEvents: 'auto' } }, pill(TextT, this.t('dock_text'), () => this.addTextBlock()), pill(Microphone, this.t('dock_dictate'), () => this.dictateTap()))
     ) : null;
 
     // -- bottom sheet shell (centered, capped width) ---------------------------
@@ -3081,7 +3170,7 @@ Respond with ONLY a JSON object:
         h('div', { style: { width: 38, height: 4, borderRadius: 4, background: 'rgba(46,39,27,0.18)', margin: '1px auto 14px' } }),
         h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 } },
           h('div', { style: { fontSize: 18, fontWeight: 720, letterSpacing: 0, color: TOK.ink } }, title),
-          h('button', { onClick: onClose, 'aria-label': 'Close', style: { width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: R.md, border: `1px solid ${TOK.hairline}`, background: 'rgba(255,255,255,0.44)', cursor: 'pointer', color: TOK.inkSoft } }, h(X, { size: 16 }))
+          h('button', { onClick: onClose, 'aria-label': this.t('close'), style: { width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: R.md, border: `1px solid ${TOK.hairline}`, background: 'rgba(255,255,255,0.44)', cursor: 'pointer', color: TOK.inkSoft } }, h(X, { size: 16 }))
         ),
         body
       )
@@ -3112,8 +3201,8 @@ Respond with ONLY a JSON object:
     const drawChip = null;
     const drawHint = st.drawMode ? h('div', { key: 'drawhint', style: { ...topBar2, display: 'flex', gap: 8, alignItems: 'center' } },
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 7, padding: '9px 15px', borderRadius: 999, background: TOK.surfaceStrong, border: `1px solid ${TOK.hairline}`, boxShadow: TOK.shadowSoft, fontSize: 13.5, fontWeight: 650, color: TOK.ink, backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)' } },
-        h(PencilSimple, { size: 17, color: TOK.cobalt }), 'Draw a tone line'),
-      h('button', { onClick: () => this.setState({ drawMode: false, drawPath: null }), 'aria-label': 'Cancel', style: { width: 34, height: 34, borderRadius: '50%', border: `1px solid ${TOK.hairline}`, background: TOK.surfaceStrong, cursor: 'pointer', color: TOK.inkSoft, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: TOK.shadowSoft } }, h(X, { size: 16 }))) : null;
+        h(PencilSimple, { size: 17, color: TOK.cobalt }), this.t('draw_hint')),
+      h('button', { onClick: () => this.setState({ drawMode: false, drawPath: null }), 'aria-label': this.t('cancel'), style: { width: 34, height: 34, borderRadius: '50%', border: `1px solid ${TOK.hairline}`, background: TOK.surfaceStrong, cursor: 'pointer', color: TOK.inkSoft, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: TOK.shadowSoft } }, h(X, { size: 16 }))) : null;
 
     // manual chip only when there's an override, no key set, and no transform running
     const waveBlk = st.waveEditId != null ? st.blocks.find(b => b.id === st.waveEditId) : null;
@@ -3210,10 +3299,10 @@ Respond with ONLY a JSON object:
     const toneGlyph = (d, accent) => h('svg', { width: 34, height: 24, viewBox: '0 0 34 24', fill: 'none', style: { flex: '0 0 auto' } },
       h('path', { d, stroke: accent ? TOK.cobalt : TOK.ink, strokeWidth: 3, strokeLinecap: 'round', strokeLinejoin: 'round', fill: 'none' }));
     const tones = [
-      ['一', 'First', 'flat', 'M4 12 H30'],
-      ['ˊ', 'Second', 'rising', 'M4 20 L30 6'],
-      ['ˇ', 'Third', 'dipping', 'M4 7 L17 20 L30 9'],
-      ['ˋ', 'Fourth', 'falling', 'M4 6 L30 20']
+      ['一', this.t('tone_first'), this.t('kind_flat'), 'M4 12 H30'],
+      ['ˊ', this.t('tone_second'), this.t('kind_rising'), 'M4 20 L30 6'],
+      ['ˇ', this.t('tone_third'), this.t('kind_dipping'), 'M4 7 L17 20 L30 9'],
+      ['ˋ', this.t('tone_fourth'), this.t('kind_falling'), 'M4 6 L30 20']
     ];
     const toneCard = ([mark, name, kind, d], i) => h('div', { key: name, style: {
       display: 'flex', flexDirection: 'column', gap: 6, padding: '11px 10px', borderRadius: 14,
@@ -3233,32 +3322,26 @@ Respond with ONLY a JSON object:
             h('span', { style: { fontSize: 22, fontWeight: 800, color: TOK.ink, letterSpacing: -0.2 } }, 'Tone Canvas'),
             h('span', { style: { fontSize: 15, fontWeight: 600, color: TOK.inkSoft, fontFamily: "'Noto Sans SC', sans-serif" } }, '声调画布')
           ),
-          h('div', { style: { fontSize: 12.5, fontWeight: 650, color: TOK.cobaltDeep } }, 'Mandarin tone typography')
+          h('div', { style: { fontSize: 12.5, fontWeight: 650, color: TOK.cobaltDeep } }, this.t('about_tagline'))
         )
       ),
       // intro
-      h('p', { style: { margin: 0, fontSize: 14, lineHeight: 1.62, color: TOK.inkSoft, fontWeight: 500 } },
-        'Type, paste, or dictate Chinese and each character becomes a geometric ',
-        h('span', { style: { color: TOK.ink, fontWeight: 700 } }, 'tone segment'),
-        ' — flat, rising, dipping, or falling — welded end to end so a whole sentence reads as one continuous, fully editable tone-wave. The geometry ',
-        h('span', { style: { fontStyle: 'italic', color: TOK.ink } }, 'is'),
-        ' the point.'
-      ),
+      h('p', { style: { margin: 0, fontSize: 14, lineHeight: 1.62, color: TOK.inkSoft, fontWeight: 500 } }, this.t('about_intro')),
       // tone legend
       h('div', null,
-        this.sectionHeader(h, ToneWaveIcon, 'The four tones'),
+        this.sectionHeader(h, ToneWaveIcon, this.t('four_tones')),
         h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 } }, tones.map(toneCard))
       ),
       // credit footer
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, paddingTop: 14, borderTop: `1px solid ${TOK.sepSoft}` } },
         h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
-          h('div', { style: { fontSize: 13, fontWeight: 750, color: TOK.ink } }, 'Designed & built by Nathan Guo'),
+          h('div', { style: { fontSize: 13, fontWeight: 750, color: TOK.ink } }, `${this.t('credit_prefix')} Nathan Guo`),
           h('div', { style: { fontSize: 12, fontWeight: 600, color: TOK.inkSoft } }, '@yellingbytes')
         ),
         h('span', { style: { marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, color: TOK.inkDim, background: 'rgba(46,39,27,0.055)', padding: '4px 10px', borderRadius: 999 } }, `v${APP_VERSION}`)
       )
     );
-    return sheet('About', body, () => this.closeSheet());
+    return sheet(this.t('about'), body, () => this.closeSheet());
   }
 
   // one settings-style row: a tinted icon tile, a label, and optional trailing
@@ -3296,13 +3379,34 @@ Respond with ONLY a JSON object:
     const chevron = h(CaretRight, { size: 15, color: TOK.inkDim, weight: 'bold', style: { flex: '0 0 auto' } });
     const hasKey = !!this.getAiKey();
     const divider = h('div', { key: 'div', style: { height: 1, background: TOK.sepSoft, margin: '6px 8px' } });
+    // App-wide UI language toggle — a compact two-way segmented switch. Only
+    // the interface chrome changes; typed/dictated Chinese content is untouched.
+    const langSeg = (lang, label) => {
+      const active = this.state.uiLang === lang;
+      return h('button', {
+        key: lang,
+        onClick: (e) => { e.stopPropagation(); this.setUiLang(lang); },
+        'aria-label': lang === 'en' ? 'English' : '中文',
+        style: {
+          padding: '3px 10px', fontSize: 12, fontWeight: 750, lineHeight: 1.6, borderRadius: 999,
+          border: 'none', cursor: 'pointer',
+          color: active ? '#fff' : TOK.inkSoft,
+          background: active ? TOK.ink : 'transparent',
+          fontFamily: lang === 'zh' ? "'Noto Sans SC', sans-serif" : 'inherit'
+        }
+      }, label);
+    };
+    const langToggle = h('div', {
+      key: 'lang-toggle',
+      style: { flex: '0 0 auto', display: 'flex', gap: 1, padding: 2, background: 'rgba(46,39,27,0.06)', borderRadius: 999 }
+    }, langSeg('en', 'En'), langSeg('zh', '中'));
     return h('div', {
       key: 'more-menu',
       className: 'tc-more-menu',
       onMouseDown: (e) => e.stopPropagation(),
       onTouchStart: (e) => e.stopPropagation(),
       role: 'menu',
-      'aria-label': 'More',
+      'aria-label': this.t('more'),
       style: {
         position: 'absolute',
         top: 'calc(100% + 8px)',
@@ -3318,16 +3422,16 @@ Respond with ONLY a JSON object:
         zIndex: 54
       }
     },
-      // brand header: mark + wordmark + version, replacing the bare "More" label
+      // brand header: mark + wordmark + language toggle, replacing the bare "More" label
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 9, padding: '5px 8px 8px' } },
         this.brandMark(h, 24),
         h('span', { style: { fontSize: 13.5, fontWeight: 780, color: TOK.ink, letterSpacing: 0.1 } }, 'Tone Canvas'),
-        h('span', { style: { marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: TOK.inkDim } }, `v${APP_VERSION}`)
+        h('span', { style: { marginLeft: 'auto' } }, langToggle)
       ),
-      this.menuRow(h, { Comp: Info, label: 'About', tint: 'ink', trailing: chevron, onClick: () => { this.closeMoreMenu(); this.openSheet('about'); } }),
-      this.menuRow(h, { Comp: Key, label: 'AI key', tint: 'cobalt', trailing: chip(hasKey ? 'Set' : 'Server', hasKey), onClick: () => { this.closeMoreMenu(); this.setAiKeyPrompt(); } }),
+      this.menuRow(h, { Comp: Info, label: this.t('about'), tint: 'ink', trailing: chevron, onClick: () => { this.closeMoreMenu(); this.openSheet('about'); } }),
+      this.menuRow(h, { Comp: Key, label: this.t('ai_key'), tint: 'cobalt', trailing: chip(hasKey ? this.t('key_set') : this.t('key_server'), hasKey), onClick: () => { this.closeMoreMenu(); this.setAiKeyPrompt(); } }),
       divider,
-      this.menuRow(h, { Comp: Trash, label: 'Reset canvas', danger: true, onClick: () => { this.closeMoreMenu(); if (typeof window !== 'undefined' && window.confirm('Clear the whole canvas?')) this.resetCanvas(); } })
+      this.menuRow(h, { Comp: Trash, label: this.t('reset_canvas'), danger: true, onClick: () => { this.closeMoreMenu(); if (typeof window !== 'undefined' && window.confirm(this.t('confirm_reset'))) this.resetCanvas(); } })
     );
   }
 
@@ -3341,9 +3445,9 @@ Respond with ONLY a JSON object:
   sheetTone(v, h, sheet) {
     const st = this.state;
     const opts = [
-      ['hanzi', TextT, 'Hanzi', 'Characters only.'],
-      ['hanziSegments', HanziSegmentIcon, 'Hanzi + Segments', 'Characters riding the tone wave.'],
-      ['segmentsOnly', ToneSegmentsIcon, 'Segments Only', 'Pure connected tone lines.'],
+      ['hanzi', TextT, this.t('tone_opt_hanzi_title'), this.t('tone_opt_hanzi_sub')],
+      ['hanziSegments', HanziSegmentIcon, this.t('tone_opt_hanziSeg_title'), this.t('tone_opt_hanziSeg_sub')],
+      ['segmentsOnly', ToneSegmentsIcon, this.t('tone_opt_segOnly_title'), this.t('tone_opt_segOnly_sub')],
     ];
     const row = ([val, Comp, title, sub]) => {
       const active = st.canvasMode === val;
@@ -3360,7 +3464,7 @@ Respond with ONLY a JSON object:
         active ? h(Check, { size: 18, weight: 'bold', color: TOK.cobalt }) : null
       );
     };
-    return sheet('Tone Mode', h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } }, opts.map(row)), () => this.closeSheet());
+    return sheet(this.t('tone_mode_title'), h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } }, opts.map(row)), () => this.closeSheet());
   }
 
   sheetStyle(v, h, sheet) {
@@ -3397,7 +3501,7 @@ Respond with ONLY a JSON object:
       return h('button', { key: val, onClick: () => this.setState({ script: val }),
         style: { flex: 1, padding: '9px 0', fontSize: 16, fontWeight: 700, fontFamily: "'Noto Sans SC','Noto Sans TC',sans-serif", borderRadius: 8, border: 'none', cursor: 'pointer', color: active ? '#fff' : TOK.inkSoft, background: active ? TOK.ink : 'transparent' } }, label);
     };
-    const scriptRow = h('div', { style: { display: 'flex', gap: 3, padding: 3, background: 'rgba(20,18,12,0.06)', borderRadius: 11 } }, seg('简 Simplified', 'simplified'), seg('繁 Traditional', 'traditional'));
+    const scriptRow = h('div', { style: { display: 'flex', gap: 3, padding: 3, background: 'rgba(20,18,12,0.06)', borderRadius: 11 } }, seg(this.t('script_simplified'), 'simplified'), seg(this.t('script_traditional'), 'traditional'));
     // Size (font-size presets — scales the whole block)
     const selBlk = st.blocks.find(b => st.selectedIds.includes(b.id));
     const curScale = selBlk ? (selBlk.scale || 1) : 1;
@@ -3408,17 +3512,17 @@ Respond with ONLY a JSON object:
     const sizeRow = h('div', { style: { display: 'flex', gap: 3, padding: 3, background: 'rgba(28,25,23,0.06)', borderRadius: 11 } }, sizes.map(sizeSeg));
 
     const body = h('div', { style: { display: 'flex', flexDirection: 'column' } },
-      this.sectionHeader(h, TextAa, 'Size'), sizeRow,
+      this.sectionHeader(h, TextAa, this.t('section_size')), sizeRow,
       h('div', { style: { height: 18 } }),
-      this.sectionHeader(h, Palette, 'Color'), colorRow,
+      this.sectionHeader(h, Palette, this.t('section_color')), colorRow,
       h('div', { style: { height: 18 } }),
-      this.sectionHeader(h, SlidersHorizontal, 'Weight'), weightRow,
+      this.sectionHeader(h, SlidersHorizontal, this.t('section_weight')), weightRow,
       h('div', { style: { height: 18 } }),
-      this.sectionHeader(h, TextAa, 'Font'), fontRow,
+      this.sectionHeader(h, TextAa, this.t('section_font')), fontRow,
       h('div', { style: { height: 18 } }),
-      this.sectionHeader(h, null, 'Script'), scriptRow
+      this.sectionHeader(h, null, this.t('section_script')), scriptRow
     );
-    return sheet('Style', body, () => this.closeSheet());
+    return sheet(this.t('style_title'), body, () => this.closeSheet());
   }
 
   sheetRewrite(v, h, sheet) {
