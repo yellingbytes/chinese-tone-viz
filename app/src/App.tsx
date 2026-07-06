@@ -1692,7 +1692,7 @@ Respond with ONLY a JSON object:
     this._editDirty = true; // creation already recorded; don't double on first keystroke
     this.setState(s => ({
       blocks: [...s.blocks, { id, x: c.x - 20, y: c.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...this._blockDefaults() }],
-      selectedIds: [id], editingId: id, addMenuOpen: false
+      selectedIds: [id], editingId: id, addMenuOpen: false, drawMode: false, drawPath: null
     }));
   }
   // a random fun-fact, different from the one used last time
@@ -2071,10 +2071,20 @@ Respond with ONLY a JSON object:
       }
     }, children);
 
-    // editing textarea (sibling overlay, not clipped)
+    // editing textarea (sibling overlay, not clipped) — sized to fit the
+    // actual typed content (grows/shrinks with line count + longest line)
+    // instead of a fixed box, so a single short word isn't stuck in a wide
+    // 280px field and a longer passage isn't clipped to one fixed height.
     let editor = null;
     if (editing) {
-      const taW = Math.max(280, bbox.w);
+      const text = block.text || '';
+      const lines = text.split('\n');
+      const rows = Math.max(1, lines.length);
+      const maxLineLen = Math.max(1, ...lines.map(l => l.length));
+      const LINE_H = 22, CHAR_W = 17, PAD_V = 20, PAD_H = 26;
+      const viewportW = typeof window !== 'undefined' ? window.innerWidth : 740;
+      const taW = Math.max(90, Math.min(maxLineLen * CHAR_W + PAD_H, Math.min(420, viewportW - 32)));
+      const taH = Math.max(46, rows * LINE_H + PAD_V);
       editor = React.createElement('textarea', {
         key: 'ta-' + block.id, autoFocus: true,
         value: block.text,
@@ -2086,7 +2096,7 @@ Respond with ONLY a JSON object:
           position: 'absolute',
           left: (left + bbox.w / 2 - taW / 2) + 'px',
           top: (top + bbox.h + 12) + 'px',
-          minWidth: '280px', width: taW + 'px', height: '52px',
+          width: taW + 'px', height: taH + 'px',
           padding: '10px 13px', fontSize: '17px', fontWeight: 500, lineHeight: 1.3,
           color: TOK.ink, background: TOK.surfaceStrong, resize: 'none',
           border: `1.5px solid ${TOK.cobalt}`, borderRadius: R.md, outline: 'none',
@@ -2597,7 +2607,6 @@ Respond with ONLY a JSON object:
     if (!this.state.drawMode) return null;
     const dp = this.state.drawPath;
     const { panX, panY, zoom } = this.state;
-    const gid = 'tcdraw-canvas';
     const toScreen = (p) => ({
       x: p.x * zoom + panX,
       y: p.y * zoom + panY
@@ -2613,12 +2622,10 @@ Respond with ONLY a JSON object:
         width: '100%', height: '100%', viewBox: `0 0 ${window.innerWidth || 1} ${window.innerHeight || 1}`,
         style: { position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none' }
       },
-        h('defs', { key: 'd' }, h('linearGradient', { id: gid, x1: '0%', y1: '0%', x2: '100%', y2: '0%' },
-          h('stop', { offset: '0%', stopColor: TOK.cobalt }), h('stop', { offset: '72%', stopColor: TOK.cobaltDeep }), h('stop', { offset: '100%', stopColor: TOK.vermilion }))),
         h('polyline', {
           key: 'p',
           points: dp.map(p => { const s = toScreen(p); return s.x.toFixed(1) + ',' + s.y.toFixed(1); }).join(' '),
-          fill: 'none', stroke: `url(#${gid})`, strokeWidth: Math.max(3, this.metrics().FS * 0.055 * zoom),
+          fill: 'none', stroke: this.state.defColor || '#161410', strokeWidth: Math.max(3, this.metrics().FS * 0.055 * zoom),
           strokeLinecap: 'round', strokeLinejoin: 'round', strokeOpacity: 0.95
         })
       ) : null
@@ -2667,7 +2674,7 @@ Respond with ONLY a JSON object:
   // shown from the moment you tap — driven by `dictating`, not the engine's
   // `recording` — so you get feedback even before the mic is granted.
   dictateTap() {
-    this.setState({ dictating: true, activeSheet: null, moreMenuOpen: false });
+    this.setState({ dictating: true, activeSheet: null, moreMenuOpen: false, drawMode: false, drawPath: null });
     this._startWaveViz();
     if (!this.state.recording) this.startDictation();
   }
@@ -3118,23 +3125,18 @@ Respond with ONLY a JSON object:
   // as a small rounded tile for menus / the About sheet.
   brandMark(h, size = 28) {
     const uid = 'bm' + Math.round(size);
-    const stroke = (key, d, accent) => h('path', { key, d, pathLength: 1, fill: 'none', stroke: accent ? `url(#${uid}-ink)` : '#352201', strokeWidth: 80, strokeLinecap: 'round', strokeLinejoin: 'round' });
+    const stroke = (key, d) => h('path', { key, d, pathLength: 1, fill: 'none', stroke: '#352201', strokeWidth: 80, strokeLinecap: 'round', strokeLinejoin: 'round' });
     return h('svg', { width: size, height: size, viewBox: '0 0 1024 1024', fill: 'none', xmlns: 'http://www.w3.org/2000/svg', style: { flex: '0 0 auto', display: 'block' } },
       h('defs', null,
-        h('clipPath', { id: uid + '-clip' }, h('rect', { width: 1024, height: 1024, rx: 224, fill: 'white' })),
-        h('linearGradient', { id: uid + '-ink', x1: 0, y1: 0, x2: 1024, y2: 1024, gradientUnits: 'userSpaceOnUse' },
-          h('stop', { offset: '0%', stopColor: '#352201' }),
-          h('stop', { offset: '58%', stopColor: '#2457d6' }),
-          h('stop', { offset: '100%', stopColor: '#d9472f' })
-        )
+        h('clipPath', { id: uid + '-clip' }, h('rect', { width: 1024, height: 1024, rx: 224, fill: 'white' }))
       ),
       h('g', { clipPath: `url(#${uid}-clip)` },
         h('rect', { width: 1024, height: 1024, fill: '#F3EEE5' }),
         stroke('a', 'M45.084 -44.9727L227.084 137.027L500.3 137.027L681.246 318.027'),
         stroke('b', 'M-66 276H88.5L225.5 413L362.5 276'),
-        stroke('c', 'M12.0664 569.266H340.283L521.229 388.266L702.175 569.266L883.12 388.266L1064.07 569.266', true),
+        stroke('c', 'M12.0664 569.266H340.283L521.229 388.266L702.175 569.266L883.12 388.266L1064.07 569.266'),
         stroke('d', 'M660 59L827.772 226.953H1081.1L1267 413'),
-        stroke('e', 'M512 640L692.946 821L873.892 640', true),
+        stroke('e', 'M512 640L692.946 821L873.892 640'),
         stroke('f', 'M84 766H357.216L538.162 947'),
         stroke('g', 'M66.0472 1087.95L234 920L401.772 1087.95H655.097L841 1274'),
         stroke('h', 'M841 947L1042 746H1315.22L1496.16 927')
@@ -3142,9 +3144,9 @@ Respond with ONLY a JSON object:
     );
   }
   renderSplash(h) {
-    const line = (key, d, i, accent = false) => h('path', {
+    const line = (key, d, i) => h('path', {
       key,
-      className: 'tc-splash-line' + (accent ? ' tc-splash-line-accent' : ''),
+      className: 'tc-splash-line',
       d,
       pathLength: 1,
       style: { '--i': i }
@@ -3163,20 +3165,15 @@ Respond with ONLY a JSON object:
         xmlns: 'http://www.w3.org/2000/svg'
       },
         h('defs', null,
-          h('clipPath', { id: 'tc-splash-clip' }, h('rect', { width: 1024, height: 1024, rx: 224, fill: 'white' })),
-          h('linearGradient', { id: 'tc-splash-ink', x1: 0, y1: 0, x2: 1024, y2: 1024, gradientUnits: 'userSpaceOnUse' },
-            h('stop', { offset: '0%', stopColor: '#352201' }),
-            h('stop', { offset: '58%', stopColor: '#2457d6' }),
-            h('stop', { offset: '100%', stopColor: '#d9472f' })
-          )
+          h('clipPath', { id: 'tc-splash-clip' }, h('rect', { width: 1024, height: 1024, rx: 224, fill: 'white' }))
         ),
         h('g', { clipPath: 'url(#tc-splash-clip)' },
           h('rect', { width: 1024, height: 1024, fill: '#F3EEE5' }),
           line('low-left', 'M45.084 -44.9727L227.084 137.027L500.3 137.027L681.246 318.027', 0),
           line('upper-left', 'M-66 276H88.5L225.5 413L362.5 276', 1),
-          line('middle-main', 'M12.0664 569.266H340.283L521.229 388.266L702.175 569.266L883.12 388.266L1064.07 569.266', 2, true),
+          line('middle-main', 'M12.0664 569.266H340.283L521.229 388.266L702.175 569.266L883.12 388.266L1064.07 569.266', 2),
           line('upper-right', 'M660 59L827.772 226.953H1081.1L1267 413', 3),
-          line('center-fold', 'M512 640L692.946 821L873.892 640', 4, true),
+          line('center-fold', 'M512 640L692.946 821L873.892 640', 4),
           line('lower-left', 'M84 766H357.216L538.162 947', 5),
           line('lower-wave', 'M66.0472 1087.95L234 920L401.772 1087.95H655.097L841 1274', 6),
           line('lower-right', 'M841 947L1042 746H1315.22L1496.16 927', 7)

@@ -52,9 +52,6 @@ button:focus-visible { outline: 2px solid rgba(36,87,214,0.34); outline-offset: 
   animation-delay: calc(120ms + (var(--i) * 92ms)), calc(620ms + (var(--i) * 72ms));
 }
 
-.tc-splash-line-accent {
-  stroke: url(#tc-splash-ink);
-}
 
 .tc-bar {
   scrollbar-width: none;
