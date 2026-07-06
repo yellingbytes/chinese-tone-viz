@@ -891,18 +891,24 @@ export default class App extends React.Component {
   startEdit(id) { this._editPre = this.snap(); this._editDirty = false; this.setState({ editingId: id, selectedIds: [id], toolbarMenu: null }); }
 
   /* ---- pointer interaction ---- */
+  // middle-click, right-click, or space+left-click all start a canvas pan —
+  // shared so it works the same whether the drag starts on empty canvas or
+  // directly on top of a text block (block divs sit in a DOM sibling of the
+  // background layer, so relying on event bubbling to reach onBgDown never
+  // actually panned when starting over a block).
+  isPanButton(e) { return e.button === 1 || e.button === 2 || (e.button === 0 && this._space); }
+  startPan(e) {
+    this._act = { type: 'pan', sx: e.clientX, sy: e.clientY, px: this.state.panX, py: this.state.panY, moved: false };
+  }
   onBgDown(e) {
-    if (e.button === 1 || (e.button === 0 && this._space)) {
-      this._act = { type: 'pan', sx: e.clientX, sy: e.clientY, px: this.state.panX, py: this.state.panY, moved: false };
-      return;
-    }
+    if (this.isPanButton(e)) { this.startPan(e); return; }
     if (e.button !== 0) return;
     // left-drag on empty space -> marquee box-select; a plain click adds text
     this._act = { type: 'maybe-marquee', sx: e.clientX, sy: e.clientY, add: e.shiftKey, base: e.shiftKey ? this.state.selectedIds.slice() : [], moved: false, hadSel: this.state.selectedIds.length > 0 };
     if (!e.shiftKey && this.state.selectedIds.length) this.setState({ selectedIds: [], waveEditId: null, drawMode: false, drawPath: null, toolbarMenu: null, customColorOpen: false });
   }
   onBlockDown(e, id) {
-    if (e.button === 1 || (e.button === 0 && this._space)) return; // let bg pan
+    if (this.isPanButton(e)) { e.stopPropagation(); this.startPan(e); return; }
     if (e.button !== 0) return;
     if (this.state.editingId === id) return; // let textarea handle
     e.stopPropagation();
@@ -2165,7 +2171,7 @@ Respond with ONLY a JSON object:
         position: 'absolute', left: left + 'px', top: top + 'px',
         width: (empty && !editing ? 240 : bbox.w) + 'px',
         height: (empty && !editing ? 50 : bbox.h) + 'px',
-        cursor: this._act && this._act.type === 'drag' ? 'grabbing' : 'grab',
+        cursor: this._act && (this._act.type === 'drag' || this._act.type === 'pan') ? 'grabbing' : 'grab',
         pointerEvents: 'auto', touchAction: editing ? 'auto' : 'none',
         zIndex: selected ? 20 : 10
       }
@@ -3217,6 +3223,10 @@ Respond with ONLY a JSON object:
     const splash = st.splashVisible ? this.renderSplash(h) : null;
 
     return h('div', {
+      // suppress the native right-click menu app-wide so right-mouse-drag can
+      // pan the canvas (including when starting over a text block) without
+      // popping a context menu on release
+      onContextMenu: (e) => e.preventDefault(),
       style: { position: 'fixed', inset: 0, overflow: 'hidden', background: TOK.canvas, fontFamily: "-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Segoe UI',system-ui,sans-serif", color: TOK.ink, WebkitFontSmoothing: 'antialiased', textRendering: 'optimizeLegibility' }
     }, v.canvasContent, empty, drawGuides, canvasDrawOverlay, v.textToolbar, moreBackdrop, topBar, dock, activeSheet, rewriteChip, waveTransformUi, drawChip, drawHint, toast, splash);
   }
@@ -3314,16 +3324,13 @@ Respond with ONLY a JSON object:
     );
 
     const body = h('div', { style: { display: 'flex', flexDirection: 'column', gap: 18, paddingBottom: 4 } },
-      // hero: mark + wordmark + tagline
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: 14 } },
-        h('div', { style: { filter: 'drop-shadow(0 8px 18px rgba(53,34,1,0.14))' } }, this.brandMark(h, 60)),
-        h('div', { style: { display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 } },
-          h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' } },
-            h('span', { style: { fontSize: 22, fontWeight: 800, color: TOK.ink, letterSpacing: -0.2 } }, 'Tone Canvas'),
-            h('span', { style: { fontSize: 15, fontWeight: 600, color: TOK.inkSoft, fontFamily: "'Noto Sans SC', sans-serif" } }, '声调画布')
-          ),
-          h('div', { style: { fontSize: 12.5, fontWeight: 650, color: TOK.cobaltDeep } }, this.t('about_tagline'))
-        )
+      // hero: wordmark + tagline
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 } },
+        h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' } },
+          h('span', { style: { fontSize: 22, fontWeight: 800, color: TOK.ink, letterSpacing: -0.2 } }, 'Tone Canvas'),
+          h('span', { style: { fontSize: 15, fontWeight: 600, color: TOK.inkSoft, fontFamily: "'Noto Sans SC', sans-serif" } }, '声调画布')
+        ),
+        h('div', { style: { fontSize: 12.5, fontWeight: 650, color: TOK.cobaltDeep } }, this.t('about_tagline'))
       ),
       // intro
       h('p', { style: { margin: 0, fontSize: 14, lineHeight: 1.62, color: TOK.inkSoft, fontWeight: 500 } }, this.t('about_intro')),
