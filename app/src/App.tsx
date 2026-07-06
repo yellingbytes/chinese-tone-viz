@@ -401,7 +401,15 @@ export default class App extends React.Component {
     // running off forever — same wrapping logic, just an automatic measure.
     const explicit = (typeof wrapWidth === 'number') && wrapWidth > 0 && wrapWidth !== Infinity;
     const noWrap = wrapWidth === Infinity;
-    const DEFAULT_WRAP = M.ADV * 14;
+    // Auto-wrap default: a readable ~14-character line, capped to the visible
+    // viewport (in world units) so it also fits on phones — without an
+    // explicit width, so the bbox below still hugs the actual wrapped content
+    // instead of being forced to the full line width.
+    let DEFAULT_WRAP = M.ADV * 14;
+    if (typeof window !== 'undefined' && window.innerWidth) {
+      const z = this.state.zoom || 1;
+      DEFAULT_WRAP = Math.min(DEFAULT_WRAP, (window.innerWidth * 0.86) / z);
+    }
     const effW = noWrap ? null : (explicit ? wrapWidth : DEFAULT_WRAP);
     const doWrap = effW != null;
     const paras = (text || '').split('\n');
@@ -1676,14 +1684,17 @@ Respond with ONLY a JSON object:
   }
   // create an empty, editable text block at the centre of the screen
   // On phones a scale-1 block (70px glyphs) overflows the viewport and never
-  // wraps to the screen, so new blocks default to a smaller scale and an
-  // explicit wrap width that fits ~90% of the visible width. Desktop keeps the
-  // full-size, auto-wrap behaviour.
+  // wraps to the screen, so new blocks default to a smaller scale. Wrapping
+  // itself is handled by layoutBlock's viewport-aware auto-wrap (see
+  // DEFAULT_WRAP there) rather than an explicit block.width — an explicit
+  // width marks the block as user-resized and forces its bounding box to
+  // span the full width even when the wrapped text is shorter, which left a
+  // dead-space gap on the right. Auto-wrap keeps the box hugging the actual
+  // content. Desktop keeps full scale.
   _blockDefaults() {
     const W = (typeof window !== 'undefined' && window.innerWidth) || 0;
     if (!W || W >= 640) return {};
-    const z = this.state.zoom || 1;
-    return { scale: 0.5, width: Math.round((W * 0.9) / z) };
+    return { scale: 0.5 };
   }
   addTextBlock() {
     const id = this._nextId++;
