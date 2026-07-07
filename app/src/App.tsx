@@ -907,15 +907,15 @@ export default class App extends React.Component {
   onBgDown(e) {
     if (this.isPanButton(e)) { this.startPan(e); return; }
     if (e.button !== 0) return;
-    // While a pen tool is active (Wave Edit handles, or freehand draw) an
-    // empty-canvas tap/drag is inert: it does NOT deselect the target block,
-    // marquee, or cancel the tool. This keeps the selection box, toolbar, and
-    // handles all visible so the tool clearly stays on — the only way out is
-    // the Draw button (or the freehand X). Pan still works via middle/right drag.
-    if (this.state.waveEditId != null || this.state.drawMode) { this._act = null; return; }
-    // left-drag on empty space -> marquee box-select; a plain click adds text
+    // Freehand draw owns a full-screen overlay with its own exit — don't let a
+    // background tap disturb it.
+    if (this.state.drawMode) { this._act = null; return; }
+    // left-drag on empty space -> marquee box-select; a single tap dismisses the
+    // selection AND exits the Wave Edit pen tool (which is tied to that block).
     this._act = { type: 'maybe-marquee', sx: e.clientX, sy: e.clientY, add: e.shiftKey, base: e.shiftKey ? this.state.selectedIds.slice() : [], moved: false, hadSel: this.state.selectedIds.length > 0 };
-    if (!e.shiftKey && this.state.selectedIds.length) this.setState({ selectedIds: [], toolbarMenu: null, customColorOpen: false });
+    if (!e.shiftKey && (this.state.selectedIds.length || this.state.waveEditId != null)) {
+      this.setState({ selectedIds: [], waveEditId: null, toolbarMenu: null, customColorOpen: false });
+    }
   }
   onBlockDown(e, id) {
     if (this.isPanButton(e)) { e.stopPropagation(); this.startPan(e); return; }
@@ -1699,11 +1699,11 @@ Respond with ONLY a JSON object:
     if (e.touches.length >= 1) { this._pinch = null; this._act = null; return; }  // pinch -> fewer fingers: reset
     this._pinch = null;
     const a = this._act;
-    // Tap-away deselects — but while a pen tool is active the tap is inert, so
-    // the target block stays selected and the tool (Wave Edit / freehand) stays
-    // on. Matches onBgDown; exit is only via the Draw button (or the freehand X).
-    const penActive = this.state.waveEditId != null || this.state.drawMode;
-    if (a && a.type === 'pan' && !a.moved && !penActive) this.setState({ selectedIds: [], toolbarMenu: null, customColorOpen: false, customColorText: null });
+    // A single tap on empty canvas dismisses the selection and exits the Wave
+    // Edit pen tool (freehand draw is untouched — it has its own overlay/exit).
+    if (a && a.type === 'pan' && !a.moved && !this.state.drawMode) {
+      this.setState({ selectedIds: [], waveEditId: null, toolbarMenu: null, customColorOpen: false, customColorText: null });
+    }
     this.onUp({});
   }
   finishEdit(id) {
@@ -2360,30 +2360,32 @@ Respond with ONLY a JSON object:
       },
       style: {
         width: '100%',
-        height: 42,
-        padding: '0 16px',
+        height: 38,
+        padding: '0 11px',
         display: 'flex',
         alignItems: 'center',
-        gap: 14,
+        gap: 9,
         border: 'none',
-        borderRadius: 10,
+        borderRadius: 9,
         background: 'transparent',
         color: TOK.ink,
         cursor: 'pointer',
-        fontSize: 17,
+        fontSize: 15,
         fontWeight: 500,
         textAlign: 'left',
+        whiteSpace: 'nowrap',
         ...style
       }
-    }, h('span', { style: { width: 18, fontSize: 17, color: active ? TOK.cobalt : TOK.inkDim } }, active ? '✓' : ''), h('span', null, label));
+    }, h('span', { style: { width: 15, flex: '0 0 auto', fontSize: 14, color: active ? TOK.cobalt : TOK.inkDim } }, active ? '✓' : ''), h('span', null, label));
     const toneOpts = [
       ['hanzi', TextT, this.t('tb_tone_characters')],
       ['hanziSegments', HanziSegmentIcon, this.t('tb_tone_hanziwave')],
       ['segmentsOnly', ToneSegmentsIcon, this.t('tb_tone_waveonly')]
     ];
-    const toneMenu = popBase('tone', 42, 230, toneOpts.map(([val, Comp, label]) =>
-      menuRow(val, label, this.state.canvasMode === val, () => this.setCanvasMode(val), { fontSize: 15 })
-    ));
+    // compact dropdown that hugs its content
+    const toneMenu = popBase('tone', 42, 164, toneOpts.map(([val, Comp, label]) =>
+      menuRow(val, label, this.state.canvasMode === val, () => this.setCanvasMode(val))
+    ), { padding: 5 });
     const customColorSelected = CUSTOM_COLOR_MAP.some(col => col.toLowerCase() === currentColor);
     const seedHsv = rgbToHsv(hexToRgb(currentColor));
     const pickerHue = this.state.customPickerHue == null ? seedHsv.h : this.state.customPickerHue;
@@ -2763,7 +2765,9 @@ Respond with ONLY a JSON object:
   /* ---- mobile chrome: sheets, tone modes, motion, tap-to-add ---- */
   openSheet(name) { this.setState({ activeSheet: name, toolbarMenu: null, moreMenuOpen: false, customColorOpen: false, customColorText: null }); }
   closeSheet() { if (this.state.recording) this.stopDictation(); this.setState({ activeSheet: null }); }
-  toggleToolbarMenu(name) { this._sizeDraftText = null; this.setState(s => ({ toolbarMenu: s.toolbarMenu === name ? null : name, activeSheet: null, moreMenuOpen: false, customColorOpen: false, customColorText: null })); }
+  // Opening a toolbar dropdown exits the Wave Edit pen tool — only one tool /
+  // active surface at a time (activating the pen likewise closes any menu).
+  toggleToolbarMenu(name) { this._sizeDraftText = null; this.setState(s => ({ toolbarMenu: s.toolbarMenu === name ? null : name, waveEditId: null, activeSheet: null, moreMenuOpen: false, customColorOpen: false, customColorText: null })); }
   closeToolbarMenu() { this._sizeDraftText = null; if (this.state.toolbarMenu || this.state.customColorOpen) this.setState({ toolbarMenu: null, customColorOpen: false, customColorText: null }); }
   toggleMoreMenu() { this.setState(s => ({ moreMenuOpen: !s.moreMenuOpen, activeSheet: null, toolbarMenu: null, customColorOpen: false, customColorText: null })); }
   closeMoreMenu() { if (this.state.moreMenuOpen) this.setState({ moreMenuOpen: false }); }
