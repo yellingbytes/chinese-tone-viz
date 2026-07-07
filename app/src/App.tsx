@@ -1598,8 +1598,11 @@ Respond with ONLY a JSON object:
       }
     } else if (a.type === 'draw') {
       const path = a.pts;
+      // A plain tap (no drag) on the draw canvas exits the Draw tool; you draw
+      // by dragging a line, and tap anywhere to dismiss it.
+      if (!a.moved) { this.setState({ drawMode: false, drawPath: null }); return; }
       this.setState({ drawPath: null });
-      if (a.moved && path && path.length > 2) {
+      if (path && path.length > 2) {
         const M = this.metrics();
         const xs = path.map(p => p.x), range = Math.max(...xs) - Math.min(...xs);
         const progress = path[path.length - 1].x - path[0].x;   // net left->right travel
