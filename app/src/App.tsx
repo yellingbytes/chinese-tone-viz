@@ -3154,14 +3154,13 @@ Respond with ONLY a JSON object:
       } },
         dockItem(TextT, this.t('dock_text'), () => this.addTextBlock()),
         dockItem(Microphone, this.t('dock_dictate'), () => this.dictateTap(), { active: st.recording || st.activeSheet === 'dictation' }),
+        // Draw is the freehand tone-line tool ONLY — independent from the pen
+        // (Wave Edit) tool, which lives in a selected block's toolbar. Tapping
+        // it again turns it off explicitly (a stray canvas tap won't cancel it).
         dockItem(PencilSimple, this.t('dock_draw'), () => {
-          // Tapping Draw again while a pen tool is already active always turns
-          // it off explicitly — the only intended way to exit now that a
-          // stray tap elsewhere on the canvas no longer cancels it.
-          if (st.drawMode || st.waveEditId != null) this.setState({ drawMode: false, waveEditId: null, drawPath: null });
-          else if (st.selectedIds.length === 1) this.toggleWaveEdit();
+          if (st.drawMode) this.setState({ drawMode: false, drawPath: null });
           else this.togglePencil();
-        }, { active: st.drawMode || st.waveEditId != null })
+        }, { active: st.drawMode })
       )
     );
 
