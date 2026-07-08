@@ -2607,8 +2607,8 @@ Respond with ONLY a JSON object:
         })
       ),
       customPalette,
-      h('div', { key: 'weight', style: { display: 'flex', alignItems: 'center', gap: 10, width: 'fit-content' } },
-        h('span', { style: { fontSize: 13, color: TOK.inkSoft, width: 42 } }, this.t('toolbar_weight')),
+      h('div', { key: 'weight', style: { display: 'flex', alignItems: 'center', gap: 10, width: '100%' } },
+        h('span', { style: { fontSize: 13, color: TOK.inkSoft, width: 42, flex: '0 0 auto' } }, this.t('toolbar_weight')),
         h('input', {
           type: 'range',
           min: 100,
@@ -2617,7 +2617,7 @@ Respond with ONLY a JSON object:
           value: block.weight != null ? block.weight : this.state.defWeight,
           onInput: (e) => applyToolbarStyle({ weight: parseInt(e.target.value, 10) || 700 }),
           onChange: (e) => applyToolbarStyle({ weight: parseInt(e.target.value, 10) || 700 }),
-          style: { width: 148, flex: '0 0 148px', accentColor: TOK.cobalt }
+          style: { flex: 1, minWidth: 0, accentColor: TOK.inkSoft }
         })
       )
     ]);
@@ -3164,13 +3164,14 @@ Respond with ONLY a JSON object:
         padding: 4,
         background: 'rgba(255,255,255,0.46)',
         border: `1px solid ${TOK.hairline}`,
-        borderRadius: 999,
+        borderRadius: 20,
         boxShadow: '0 8px 26px rgba(57,43,24,0.10), inset 0 1px 0 rgba(255,255,255,0.62)',
         backdropFilter: 'blur(30px) saturate(1.35)',
         WebkitBackdropFilter: 'blur(30px) saturate(1.35)'
       } },
         iconBtn(ArrowCounterClockwise, this.t('undo'), () => this.undo(), { disabled: !this._undo.length }),
         iconBtn(ArrowClockwise, this.t('redo'), () => this.redo(), { disabled: !this._redo.length }),
+        h('div', { key: 'tb-sep', style: { width: 1, height: 22, background: TOK.hairline, margin: '0 4px', flex: '0 0 auto' } }),
         iconBtn(Gear, this.t('more'), () => this.toggleMoreMenu(), { active: st.moreMenuOpen }),
         moreDropdown
       )
