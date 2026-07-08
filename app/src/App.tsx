@@ -3140,16 +3140,20 @@ Respond with ONLY a JSON object:
     };
 
     // -- compact canvas controls ---------------------------------------------
+    // Backdrop sits just below the raised top bar (see below) so a tap anywhere
+    // — including on the text toolbar — closes the settings menu.
     const moreBackdrop = st.moreMenuOpen ? h('div', {
       key: 'more-backdrop',
       onMouseDown: () => this.closeMoreMenu(),
       onTouchStart: () => this.closeMoreMenu(),
-      style: { position: 'fixed', inset: 0, zIndex: 49, pointerEvents: 'auto', background: 'transparent' }
+      style: { position: 'fixed', inset: 0, zIndex: 89, pointerEvents: 'auto', background: 'transparent' }
     }) : null;
     const moreDropdown = st.moreMenuOpen ? this.renderMoreDropdown(h) : null;
 
+    // While the settings menu is open, lift the top bar above the text toolbar
+    // (shell z60, its menus z75) so the glass dropdown layers on top of it.
     const topBar = h('div', {
-      style: { position: 'absolute', top: 0, left: 0, right: 0, paddingTop: 'env(safe-area-inset-top)', display: 'flex', justifyContent: 'flex-end', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
+      style: { position: 'absolute', top: 0, left: 0, right: 0, paddingTop: 'env(safe-area-inset-top)', display: 'flex', justifyContent: 'flex-end', zIndex: st.moreMenuOpen ? 90 : 50, userSelect: 'none', pointerEvents: 'none' }
     },
       h('div', { style: {
         position: 'relative',
