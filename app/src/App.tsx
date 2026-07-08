@@ -836,10 +836,12 @@ export default class App extends React.Component {
   }
   // pan so the first block sits centered in the visible canvas (slightly biased
   // up to clear the bottom tool dock)
-  centerView() {
-    const b = this.state.blocks[0]; if (!b) return;
-    const M = this.metrics();
-    const r = this.blockWorldRect(b, M);
+  centerView() { const b = this.state.blocks[0]; if (b) this.centerOnBlock(b.id); }
+  // pan so a specific block sits centred in the visible canvas (biased up a
+  // little to clear the bottom dock)
+  centerOnBlock(id) {
+    const b = this.state.blocks.find(x => x.id === id); if (!b) return;
+    const r = this.blockWorldRect(b, this.metrics());
     const z = this.state.zoom || 1;
     const cx = window.innerWidth / 2, cy = window.innerHeight / 2 - 24;
     this.setState({ panX: cx - (r.x + r.w / 2) * z, panY: cy - (r.y + r.h / 2) * z });
@@ -1812,15 +1814,38 @@ Respond with ONLY a JSON object:
     if (!W || W >= 640) return {};
     return { scale: 0.5 };
   }
+  // Where a newly created block (Text / Dictate / sample) should land: just
+  // below the lowest existing block and left-aligned to the existing content,
+  // so new text never lands on top of what's already there. With an empty
+  // canvas it falls at the viewport centre. Returns block.x / block.y (the
+  // stored origin), compensating for the block's own bbox offset.
+  _nextBlockPos(scale) {
+    const M = this.metrics();
+    const nb = this.layoutBlock('', this.scaleMetrics(M, scale || 1), undefined, undefined).bbox;
+    const blocks = this.state.blocks;
+    if (!blocks.length) {
+      const c = this.toWorld(window.innerWidth / 2, window.innerHeight / 2);
+      return { x: c.x - nb.x - nb.w / 2, y: c.y - nb.y - nb.h / 2 };
+    }
+    let maxBottom = -Infinity, anchorLeft = Infinity;
+    for (const b of blocks) {
+      const r = this.blockWorldRect(b, M);
+      maxBottom = Math.max(maxBottom, r.y + r.h);
+      anchorLeft = Math.min(anchorLeft, r.x);
+    }
+    const gap = M.FS * (scale || 1) * 0.55;
+    return { x: anchorLeft - nb.x, y: (maxBottom + gap) - nb.y };
+  }
   addTextBlock() {
     const id = this._nextId++;
-    const c = this.toWorld(window.innerWidth / 2, window.innerHeight / 2);
+    const defs = this._blockDefaults();
+    const p = this._nextBlockPos(defs.scale);
     this.pushHistory();
     this._editDirty = true; // creation already recorded; don't double on first keystroke
     this.setState(s => ({
-      blocks: [...s.blocks, { id, x: c.x - 20, y: c.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...this._blockDefaults() }],
+      blocks: [...s.blocks, { id, x: p.x, y: p.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...defs }],
       selectedIds: [id], editingId: id, addMenuOpen: false, drawMode: false, drawPath: null
-    }));
+    }), () => this.centerOnBlock(id));
   }
   // a random fun-fact, different from the one used last time
   randomSample() {
@@ -1833,12 +1858,13 @@ Respond with ONLY a JSON object:
   // drop a random fun-fact sample at the centre of the screen
   addSampleBlock() {
     const id = this._nextId++;
-    const c = this.toWorld(window.innerWidth / 2, window.innerHeight / 2);
+    const defs = this._blockDefaults();
+    const p = this._nextBlockPos(defs.scale);
     this.pushHistory();
     this.setState(s => ({
-      blocks: [...s.blocks, { id, x: c.x - 150, y: c.y, text: this.randomSample(), color: s.defColor, weight: s.defWeight, font: s.defFont, ...this._blockDefaults() }],
+      blocks: [...s.blocks, { id, x: p.x, y: p.y, text: this.randomSample(), color: s.defColor, weight: s.defWeight, font: s.defFont, ...defs }],
       selectedIds: [id], addMenuOpen: false
-    }));
+    }), () => this.centerOnBlock(id));
   }
 
   /* ===================================================================
@@ -1891,13 +1917,14 @@ Respond with ONLY a JSON object:
     // view and opens it as a textarea, so you can watch the dictated text stream
     // in live and edit it anytime — never appending onto existing blocks.
     const id = this._nextId++;
-    const c = this.toWorld(window.innerWidth / 2, window.innerHeight / 2);
+    const defs = this._blockDefaults();
+    const p = this._nextBlockPos(defs.scale);
     this.pushHistory();
     this._recBase = '';
     this.setState(s => ({
-      blocks: [...s.blocks, { id, x: c.x - 150, y: c.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...this._blockDefaults() }],
+      blocks: [...s.blocks, { id, x: p.x, y: p.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...defs }],
       selectedIds: [id], editingId: id, recording: true, recStatus: 'Listening…'
-    }));
+    }), () => this.centerOnBlock(id));
     this._startWaveViz();
     this._recBlockId = id;
     this._recFinal = '';        // dictation appended this session (after _recBase)
@@ -1951,13 +1978,14 @@ Respond with ONLY a JSON object:
   // commit each utterance into _recBase and restart to keep capturing.
   async startNativeDictation() {
     const id = this._nextId++;
-    const c = this.toWorld(window.innerWidth / 2, window.innerHeight / 2);
+    const defs = this._blockDefaults();
+    const p = this._nextBlockPos(defs.scale);
     this.pushHistory();
     this._recBase = ''; this._nativePartial = ''; this._nativeStt = true;
     this.setState(s => ({
-      blocks: [...s.blocks, { id, x: c.x - 150, y: c.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...this._blockDefaults() }],
+      blocks: [...s.blocks, { id, x: p.x, y: p.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...defs }],
       selectedIds: [id], editingId: id, recording: true, recStatus: 'Starting…'
-    }));
+    }), () => this.centerOnBlock(id));
     this._startWaveViz();
     this._recBlockId = id; this._editPre = this.snap(); this._editDirty = true;
 
