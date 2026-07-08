@@ -10,7 +10,7 @@ import * as OpenCCImport from 'opencc-js';
 import { Capacitor } from '@capacitor/core';
 import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import {
-  ArrowCounterClockwise, ArrowClockwise, DotsThree,
+  ArrowCounterClockwise, ArrowClockwise, Gear,
   TextT, Microphone, SlidersHorizontal, Palette, TextAa,
   X, Check, Info, Trash, PenNib, Sparkle, Key, Copy, PencilSimple, CaretRight,
 } from '@phosphor-icons/react';
@@ -3136,7 +3136,7 @@ Respond with ONLY a JSON object:
       } },
         iconBtn(ArrowCounterClockwise, this.t('undo'), () => this.undo(), { disabled: !this._undo.length }),
         iconBtn(ArrowClockwise, this.t('redo'), () => this.redo(), { disabled: !this._redo.length }),
-        iconBtn(DotsThree, this.t('more'), () => this.toggleMoreMenu(), { active: st.moreMenuOpen }),
+        iconBtn(Gear, this.t('more'), () => this.toggleMoreMenu(), { active: st.moreMenuOpen }),
         moreDropdown
       )
     );
