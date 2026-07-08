@@ -12,7 +12,7 @@ import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import {
   ArrowCounterClockwise, ArrowClockwise, Gear,
   TextT, Microphone, SlidersHorizontal, Palette, TextAa,
-  X, Check, Info, Trash, PenNib, Sparkle, Key, Copy, PencilSimple, CaretRight,
+  X, Check, Info, Trash, LineSegments, Sparkle, Key, Copy, PencilSimple, CaretRight,
 } from '@phosphor-icons/react';
 import { ToneWaveIcon, HanziSegmentIcon, ToneSegmentsIcon } from './ToneIcons';
 
@@ -2285,6 +2285,7 @@ Respond with ONLY a JSON object:
     const viewportH = typeof window !== 'undefined' ? window.innerHeight : 720;
     const fixedLeft = Math.max(16, Math.min(viewportW - 16, screenLeft));
     const fixedToolbarW = Math.min(254, viewportW * 0.94);
+    const hoverTint = 'rgba(46,39,27,0.06)';
     const toolBtn = (Comp, label, onClick, opts = {}) => {
       const active = !!opts.active, disabled = !!opts.disabled;
       const color = disabled ? TOK.inkDim : (opts.danger ? TOK.rec : (active ? TOK.cobaltDeep : TOK.ink));
@@ -2294,6 +2295,8 @@ Respond with ONLY a JSON object:
         'aria-label': label,
         disabled,
         onClick: disabled ? undefined : onClick,
+        onMouseEnter: disabled ? undefined : (e) => { if (!active) e.currentTarget.style.background = opts.danger ? TOK.vermilionSoft : hoverTint; },
+        onMouseLeave: disabled ? undefined : (e) => { e.currentTarget.style.background = active ? dark2 : 'transparent'; },
         style: {
           height: controlH,
           width: controlH,
@@ -2310,7 +2313,8 @@ Respond with ONLY a JSON object:
           fontSize: 12,
           fontWeight: 650,
           lineHeight: 1,
-          whiteSpace: 'nowrap'
+          whiteSpace: 'nowrap',
+          transition: 'background 0.15s ease'
         }
       },
         h(Comp, { size: 17, color, weight: active ? 'fill' : 'regular' })
@@ -2321,6 +2325,8 @@ Respond with ONLY a JSON object:
       title: this.t('toolbar_style'),
       'aria-label': this.t('toolbar_style'),
       onClick: () => this.toggleToolbarMenu('style'),
+      onMouseEnter: (e) => { if (menu !== 'style') e.currentTarget.style.background = hoverTint; },
+      onMouseLeave: (e) => { e.currentTarget.style.background = menu === 'style' ? dark2 : 'transparent'; },
       style: {
         height: controlH,
         width: controlH,
@@ -2334,7 +2340,8 @@ Respond with ONLY a JSON object:
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        lineHeight: 1
+        lineHeight: 1,
+        transition: 'background 0.15s ease'
       }
     },
       h('span', { style: { width: 20, height: 20, borderRadius: '50%', border: '2px solid rgba(46,39,27,0.16)', background: block.color || this.state.defColor, boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.34)' } })
@@ -2628,7 +2635,7 @@ Respond with ONLY a JSON object:
       }
     }, colorButton, divider('d0'),
       toolBtn(ToneWaveIcon, this.t('toolbar_tone'), () => this.toggleToolbarMenu('tone'), { active: menu === 'tone' }),
-      toolBtn(PenNib, this.t('toolbar_wave'), () => this.toggleWaveEdit(), { disabled: !one, active: this.state.waveEditId === block.id }),
+      toolBtn(LineSegments, this.t('toolbar_wave'), () => this.toggleWaveEdit(), { disabled: !one, active: this.state.waveEditId === block.id }),
       divider('d1'),
       toolBtn(Copy, this.t('toolbar_duplicate'), () => this.duplicate(), { iconOnly: true }),
       toolBtn(Trash, this.t('toolbar_delete'), () => this.del(), { iconOnly: true, danger: true }));
