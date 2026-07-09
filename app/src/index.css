@@ -197,7 +197,22 @@ button:focus-visible { outline: 2px solid rgba(36,87,214,0.34); outline-offset: 
 @keyframes tc-breathe { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.85; } }
 @keyframes tc-sweep   { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -220; } }
 
+/* Empty-canvas prompt: a gentle downward bob inviting the user toward the dock. */
+@keyframes tc-empty-hint {
+  0%, 100% { transform: translateY(0);   opacity: 0.8; }
+  50%      { transform: translateY(5px); opacity: 1; }
+}
+.tc-empty-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  animation: tc-empty-hint 2.6s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .tc-empty-hint { animation: none; }
+
   .tc-splash,
   .tc-splash-mark,
   .tc-splash-line {

@@ -12,7 +12,7 @@ import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import {
   ArrowCounterClockwise, ArrowClockwise, Gear,
   TextT, Microphone, SlidersHorizontal, Palette, TextAa,
-  X, Check, Info, Trash, LineSegments, Sparkle, Key, Copy, PencilSimple, CaretRight,
+  X, Check, Info, Trash, LineSegments, Sparkle, Key, Copy, PencilSimple, CaretRight, CaretDown,
 } from '@phosphor-icons/react';
 import { ToneWaveIcon, HanziSegmentIcon, ToneSegmentsIcon } from './ToneIcons';
 
@@ -61,7 +61,7 @@ const STRINGS = {
   dock_text: { en: 'Text', zh: '文字' },
   dock_dictate: { en: 'Dictate', zh: '听写' },
   dock_draw: { en: 'Draw', zh: '画线' },
-  empty_start: { en: 'Start with text or voice', zh: '用文字或语音开始' },
+  empty_start: { en: 'Add Chinese with these tools to discover the hidden wave', zh: '用这些工具添加中文，发现隐藏的波浪' },
   placeholder_type: { en: 'Type Chinese', zh: '输入中文' },
   draw_hint: { en: 'Draw a tone line', zh: '画一条声调线' },
   cancel: { en: 'Cancel', zh: '取消' },
@@ -3211,16 +3211,15 @@ Respond with ONLY a JSON object:
       )
     );
 
-    // -- empty state -----------------------------------------------------------
-    const pill = (Comp, label, onClick) => h('button', {
-      key: label, onClick,
-      style: { display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', fontSize: 14, fontWeight: 600, color: TOK.ink, background: TOK.panel, border: `1px solid ${TOK.sep}`, borderRadius: R.md, boxShadow: '0 1px 2px rgba(28,25,23,0.05)', cursor: 'pointer' }
-    }, h(Comp, { size: 17, color: TOK.inkSoft }), label);
+    // -- empty state: a single localized invitation that floats just above the
+    // dock with a gently bobbing down-chevron pointing at the creation tools ----
     const empty = (!st.blocks.length) ? h('div', {
-      style: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, pointerEvents: 'none', zIndex: 5 }
+      style: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', paddingBottom: 'calc(env(safe-area-inset-bottom) + 92px)', pointerEvents: 'none', zIndex: 5 }
     },
-      h('div', { style: { fontSize: 15, fontWeight: 650, color: TOK.inkSoft, letterSpacing: 0 } }, this.t('empty_start')),
-      h('div', { style: { display: 'flex', gap: 10, pointerEvents: 'auto' } }, pill(TextT, this.t('dock_text'), () => this.addTextBlock()), pill(Microphone, this.t('dock_dictate'), () => this.dictateTap()))
+      h('div', { className: 'tc-empty-hint' },
+        h('div', { style: { fontSize: 15, fontWeight: 650, color: TOK.inkSoft, letterSpacing: 0, textAlign: 'center', maxWidth: 244, lineHeight: 1.4 } }, this.t('empty_start')),
+        h(CaretDown, { size: 18, color: TOK.inkDim, weight: 'bold' })
+      )
     ) : null;
 
     // -- bottom sheet shell (centered, capped width) ---------------------------
