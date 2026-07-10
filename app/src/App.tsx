@@ -2240,8 +2240,15 @@ Respond with ONLY a JSON object:
       const viewportW = typeof window !== 'undefined' ? window.innerWidth : 740;
       const taW = Math.max(90, Math.min(maxLineLen * CHAR_W + PAD_H, Math.min(420, viewportW - 32)));
       const taH = Math.max(46, rows * LINE_H + PAD_V);
+      // While voice-dictating into this block on a native platform, keep the
+      // on-screen keyboard down: don't auto-focus, and make the field read-only
+      // with no input mode. The text streams in from speech; the keyboard would
+      // only cover the canvas and fight the mic. Web + normal editing unchanged.
+      const dictatingHere = Capacitor.isNativePlatform() && this.state.recording && block.id === this._recBlockId;
       editor = React.createElement('textarea', {
-        key: 'ta-' + block.id, autoFocus: true,
+        key: 'ta-' + block.id, autoFocus: !dictatingHere,
+        readOnly: dictatingHere,
+        inputMode: dictatingHere ? 'none' : undefined,
         value: block.text,
         onChange: (e) => this.editText(block.id, e.target.value),
         onMouseDown: (e) => e.stopPropagation(),
