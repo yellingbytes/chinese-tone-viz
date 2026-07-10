@@ -116,9 +116,9 @@ const STRINGS = {
   toolbar_delete: { en: 'Delete', zh: '删除' },
   toolbar_weight: { en: 'Weight', zh: '字重' },
   toolbar_custom_color: { en: 'Custom color', zh: '自定义颜色' },
-  tb_tone_characters: { en: 'Characters', zh: '汉字' },
-  tb_tone_hanziwave: { en: 'Hanzi + wave', zh: '汉字 + 声调波' },
-  tb_tone_waveonly: { en: 'Wave only', zh: '仅声调波' }
+  tb_tone_characters: { en: 'Hanzi', zh: '汉字' },
+  tb_tone_hanziwave: { en: 'Hanzi Wave', zh: '汉字声调波' },
+  tb_tone_waveonly: { en: 'Wave', zh: '声调波' }
 };
 const COLOR_CHIPS = ['#1c1917', '#ef4444', '#f97316', '#eab308', '#22c55e', '#0ea5e9', '#2563eb', '#8b5cf6', '#ec4899', '#ffffff'];
 const CUSTOM_COLOR_MAP = [
@@ -2434,16 +2434,16 @@ Respond with ONLY a JSON object:
         gap: 9,
         border: 'none',
         borderRadius: 9,
-        background: 'transparent',
-        color: TOK.ink,
+        background: active ? TOK.cobaltSoft : 'transparent',
+        color: active ? TOK.cobaltDeep : TOK.ink,
         cursor: 'pointer',
         fontSize: 15,
-        fontWeight: 500,
+        fontWeight: active ? 700 : 500,
         textAlign: 'left',
         whiteSpace: 'nowrap',
         ...style
       }
-    }, h('span', { style: { width: 15, flex: '0 0 auto', fontSize: 14, color: active ? TOK.cobalt : TOK.inkDim } }, active ? '✓' : ''), h('span', null, label));
+    }, h('span', null, label));
     const toneOpts = [
       ['hanzi', TextT, this.t('tb_tone_characters')],
       ['hanziSegments', HanziSegmentIcon, this.t('tb_tone_hanziwave')],
