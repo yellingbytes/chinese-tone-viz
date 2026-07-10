@@ -823,6 +823,13 @@ export default class App extends React.Component {
     window.addEventListener('touchmove', this._onTouchMove, { passive: false });
     window.addEventListener('touchend', this._onTouchEnd);
     window.addEventListener('touchcancel', this._onTouchEnd);
+    // Re-centre a just-added text block when the visible viewport changes — i.e.
+    // when the iOS keyboard slides up after we focus the new block — so it lands
+    // centred in the space above the keyboard instead of behind it.
+    if (typeof window !== 'undefined' && window.visualViewport) {
+      this._onVvResize = () => { if (this._centerPendingId != null) this.centerOnBlock(this._centerPendingId); };
+      window.visualViewport.addEventListener('resize', this._onVvResize);
+    }
     this.ensureUsedFonts();
     this._splashExitT = setTimeout(() => this.setState({ splashExiting: true }), 1900);
     this._splashDoneT = setTimeout(() => this.setState({ splashVisible: false }), 2550);
@@ -837,14 +844,23 @@ export default class App extends React.Component {
   // pan so the first block sits centered in the visible canvas (slightly biased
   // up to clear the bottom tool dock)
   centerView() { const b = this.state.blocks[0]; if (b) this.centerOnBlock(b.id); }
-  // pan so a specific block sits centred in the visible canvas (biased up a
-  // little to clear the bottom dock)
+  // pan so a specific block sits centred in the *visible* canvas (biased up a
+  // little to clear the bottom dock). Uses visualViewport so that on iOS the
+  // block centres in the area above the on-screen keyboard, not behind it.
   centerOnBlock(id) {
     const b = this.state.blocks.find(x => x.id === id); if (!b) return;
-    const r = this.blockWorldRect(b, this.metrics());
+    // Use the block's real layout bbox (not blockWorldRect, which reports a
+    // fixed 240px width for empty blocks) so a freshly-added empty block centres
+    // on its actual rendered box rather than a wider phantom (which shifted it
+    // left of centre).
+    const { bbox } = this.layoutBlock(this.glyphsText(b.text), this.scaleMetrics(this.metrics(), b.scale || 1), b.width, b.toneOverrides);
+    const worldCx = b.x + bbox.x + bbox.w / 2, worldCy = b.y + bbox.y + bbox.h / 2;
     const z = this.state.zoom || 1;
-    const cx = window.innerWidth / 2, cy = window.innerHeight / 2 - 24;
-    this.setState({ panX: cx - (r.x + r.w / 2) * z, panY: cy - (r.y + r.h / 2) * z });
+    const vv = (typeof window !== 'undefined') && window.visualViewport;
+    const vw = vv ? vv.width : window.innerWidth;
+    const vh = vv ? vv.height : window.innerHeight;
+    const cx = vw / 2, cy = vh / 2 - 24;
+    this.setState({ panX: cx - worldCx * z, panY: cy - worldCy * z });
   }
   componentWillUnmount() {
     window.removeEventListener('mousemove', this._onMove);
@@ -856,6 +872,7 @@ export default class App extends React.Component {
     window.removeEventListener('touchmove', this._onTouchMove, { passive: false });
     window.removeEventListener('touchend', this._onTouchEnd);
     window.removeEventListener('touchcancel', this._onTouchEnd);
+    if (typeof window !== 'undefined' && window.visualViewport && this._onVvResize) window.visualViewport.removeEventListener('resize', this._onVvResize);
     clearTimeout(this._splashExitT);
     clearTimeout(this._splashDoneT);
     if (this._recog) { try { this._recog.onend = null; this._recog.stop(); } catch (e) {} this._recog = null; }
@@ -1712,6 +1729,8 @@ Respond with ONLY a JSON object:
     this.onUp({});
   }
   finishEdit(id) {
+    // editing is ending (keyboard about to hide) — stop keyboard-driven re-centring
+    if (this._centerPendingId === id) this._centerPendingId = null;
     // While dictating into this block, just leave the textarea — keep the block
     // alive (even if momentarily empty) so incoming speech still has a target.
     if (this.state.recording && id === this._recBlockId) {
@@ -1842,6 +1861,9 @@ Respond with ONLY a JSON object:
     const p = this._nextBlockPos(defs.scale);
     this.pushHistory();
     this._editDirty = true; // creation already recorded; don't double on first keystroke
+    // mark this block for re-centring once the keyboard settles (see the
+    // visualViewport listener in componentDidMount); cleared in finishEdit.
+    this._centerPendingId = id;
     this.setState(s => ({
       blocks: [...s.blocks, { id, x: p.x, y: p.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...defs }],
       selectedIds: [id], editingId: id, addMenuOpen: false, drawMode: false, drawPath: null
