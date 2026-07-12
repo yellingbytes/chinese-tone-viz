@@ -116,9 +116,9 @@ const STRINGS = {
   toolbar_delete: { en: 'Delete', zh: '删除' },
   toolbar_weight: { en: 'Weight', zh: '字重' },
   toolbar_custom_color: { en: 'Custom color', zh: '自定义颜色' },
-  tb_tone_characters: { en: 'Characters', zh: '汉字' },
-  tb_tone_hanziwave: { en: 'Hanzi + wave', zh: '汉字 + 声调波' },
-  tb_tone_waveonly: { en: 'Wave only', zh: '仅声调波' }
+  tb_tone_characters: { en: 'Hanzi', zh: '汉字' },
+  tb_tone_hanziwave: { en: 'Hanzi Wave', zh: '汉字声调波' },
+  tb_tone_waveonly: { en: 'Wave', zh: '声调波' }
 };
 const COLOR_CHIPS = ['#1c1917', '#ef4444', '#f97316', '#eab308', '#22c55e', '#0ea5e9', '#2563eb', '#8b5cf6', '#ec4899', '#ffffff'];
 const CUSTOM_COLOR_MAP = [
@@ -823,6 +823,13 @@ export default class App extends React.Component {
     window.addEventListener('touchmove', this._onTouchMove, { passive: false });
     window.addEventListener('touchend', this._onTouchEnd);
     window.addEventListener('touchcancel', this._onTouchEnd);
+    // Re-centre a just-added text block when the visible viewport changes — i.e.
+    // when the iOS keyboard slides up after we focus the new block — so it lands
+    // centred in the space above the keyboard instead of behind it.
+    if (typeof window !== 'undefined' && window.visualViewport) {
+      this._onVvResize = () => { if (this._centerPendingId != null) this.centerOnBlock(this._centerPendingId); };
+      window.visualViewport.addEventListener('resize', this._onVvResize);
+    }
     this.ensureUsedFonts();
     this._splashExitT = setTimeout(() => this.setState({ splashExiting: true }), 1900);
     this._splashDoneT = setTimeout(() => this.setState({ splashVisible: false }), 2550);
@@ -837,14 +844,23 @@ export default class App extends React.Component {
   // pan so the first block sits centered in the visible canvas (slightly biased
   // up to clear the bottom tool dock)
   centerView() { const b = this.state.blocks[0]; if (b) this.centerOnBlock(b.id); }
-  // pan so a specific block sits centred in the visible canvas (biased up a
-  // little to clear the bottom dock)
+  // pan so a specific block sits centred in the *visible* canvas (biased up a
+  // little to clear the bottom dock). Uses visualViewport so that on iOS the
+  // block centres in the area above the on-screen keyboard, not behind it.
   centerOnBlock(id) {
     const b = this.state.blocks.find(x => x.id === id); if (!b) return;
-    const r = this.blockWorldRect(b, this.metrics());
+    // Use the block's real layout bbox (not blockWorldRect, which reports a
+    // fixed 240px width for empty blocks) so a freshly-added empty block centres
+    // on its actual rendered box rather than a wider phantom (which shifted it
+    // left of centre).
+    const { bbox } = this.layoutBlock(this.glyphsText(b.text), this.scaleMetrics(this.metrics(), b.scale || 1), b.width, b.toneOverrides);
+    const worldCx = b.x + bbox.x + bbox.w / 2, worldCy = b.y + bbox.y + bbox.h / 2;
     const z = this.state.zoom || 1;
-    const cx = window.innerWidth / 2, cy = window.innerHeight / 2 - 24;
-    this.setState({ panX: cx - (r.x + r.w / 2) * z, panY: cy - (r.y + r.h / 2) * z });
+    const vv = (typeof window !== 'undefined') && window.visualViewport;
+    const vw = vv ? vv.width : window.innerWidth;
+    const vh = vv ? vv.height : window.innerHeight;
+    const cx = vw / 2, cy = vh / 2 - 24;
+    this.setState({ panX: cx - worldCx * z, panY: cy - worldCy * z });
   }
   componentWillUnmount() {
     window.removeEventListener('mousemove', this._onMove);
@@ -856,6 +872,7 @@ export default class App extends React.Component {
     window.removeEventListener('touchmove', this._onTouchMove, { passive: false });
     window.removeEventListener('touchend', this._onTouchEnd);
     window.removeEventListener('touchcancel', this._onTouchEnd);
+    if (typeof window !== 'undefined' && window.visualViewport && this._onVvResize) window.visualViewport.removeEventListener('resize', this._onVvResize);
     clearTimeout(this._splashExitT);
     clearTimeout(this._splashDoneT);
     if (this._recog) { try { this._recog.onend = null; this._recog.stop(); } catch (e) {} this._recog = null; }
@@ -912,6 +929,11 @@ export default class App extends React.Component {
     // Freehand draw owns a full-screen overlay with its own exit — don't let a
     // background tap disturb it.
     if (this.state.drawMode) { this._act = null; return; }
+    // Tapping away commits any open edit. The blur-driven finishEdit can't fire
+    // after voice dictation (the textarea is never focused on native), so do it
+    // explicitly here — otherwise the "typing box" lingers and the block stays
+    // un-selectable. Skipped mid-dictation (the dictation bar owns that).
+    if (this.state.editingId != null && !this.state.recording) this.finishEdit(this.state.editingId);
     // left-drag on empty space -> marquee box-select; a single tap dismisses the
     // selection AND exits the Wave Edit pen tool (which is tied to that block).
     this._act = { type: 'maybe-marquee', sx: e.clientX, sy: e.clientY, add: e.shiftKey, base: e.shiftKey ? this.state.selectedIds.slice() : [], moved: false, hadSel: this.state.selectedIds.length > 0 };
@@ -1707,11 +1729,17 @@ Respond with ONLY a JSON object:
     // A single tap on empty canvas dismisses the selection and exits the Wave
     // Edit pen tool (freehand draw is untouched — it has its own overlay/exit).
     if (a && a.type === 'pan' && !a.moved && !this.state.drawMode) {
+      // Commit any open edit — after voice dictation the textarea isn't focused,
+      // so the blur-driven finishEdit never fires; do it explicitly so the typing
+      // box dismisses and the text becomes selectable.
+      if (this.state.editingId != null && !this.state.recording) this.finishEdit(this.state.editingId);
       this.setState({ selectedIds: [], waveEditId: null, toolbarMenu: null, customColorOpen: false, customColorText: null });
     }
     this.onUp({});
   }
   finishEdit(id) {
+    // editing is ending (keyboard about to hide) — stop keyboard-driven re-centring
+    if (this._centerPendingId === id) this._centerPendingId = null;
     // While dictating into this block, just leave the textarea — keep the block
     // alive (even if momentarily empty) so incoming speech still has a target.
     if (this.state.recording && id === this._recBlockId) {
@@ -1842,6 +1870,9 @@ Respond with ONLY a JSON object:
     const p = this._nextBlockPos(defs.scale);
     this.pushHistory();
     this._editDirty = true; // creation already recorded; don't double on first keystroke
+    // mark this block for re-centring once the keyboard settles (see the
+    // visualViewport listener in componentDidMount); cleared in finishEdit.
+    this._centerPendingId = id;
     this.setState(s => ({
       blocks: [...s.blocks, { id, x: p.x, y: p.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...defs }],
       selectedIds: [id], editingId: id, addMenuOpen: false, drawMode: false, drawPath: null
@@ -2065,8 +2096,13 @@ Respond with ONLY a JSON object:
     };
     tick();
 
+    // IMPORTANT: never open a second WebKit microphone on native. The native
+    // speech-recognition plugin already owns the shared iOS AVAudioSession, and
+    // a concurrent getUserMedia grab conflicts with it — crashing the app after
+    // a couple of dictation attempts. On native the synthetic wave above drives
+    // the bar; the real-mic analyser is web-only.
     const AC = (typeof window !== 'undefined') && (window.AudioContext || window.webkitAudioContext);
-    if (AC && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    if (AC && !Capacitor.isNativePlatform() && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
         if (!this._waveActive) { stream.getTracks().forEach(tr => tr.stop()); return; }
         this._waveStream = stream;
@@ -2240,8 +2276,15 @@ Respond with ONLY a JSON object:
       const viewportW = typeof window !== 'undefined' ? window.innerWidth : 740;
       const taW = Math.max(90, Math.min(maxLineLen * CHAR_W + PAD_H, Math.min(420, viewportW - 32)));
       const taH = Math.max(46, rows * LINE_H + PAD_V);
+      // While voice-dictating into this block on a native platform, keep the
+      // on-screen keyboard down: don't auto-focus, and make the field read-only
+      // with no input mode. The text streams in from speech; the keyboard would
+      // only cover the canvas and fight the mic. Web + normal editing unchanged.
+      const dictatingHere = Capacitor.isNativePlatform() && this.state.recording && block.id === this._recBlockId;
       editor = React.createElement('textarea', {
-        key: 'ta-' + block.id, autoFocus: true,
+        key: 'ta-' + block.id, autoFocus: !dictatingHere,
+        readOnly: dictatingHere,
+        inputMode: dictatingHere ? 'none' : undefined,
         value: block.text,
         onChange: (e) => this.editText(block.id, e.target.value),
         onMouseDown: (e) => e.stopPropagation(),
@@ -2405,16 +2448,16 @@ Respond with ONLY a JSON object:
         gap: 9,
         border: 'none',
         borderRadius: 9,
-        background: 'transparent',
-        color: TOK.ink,
+        background: active ? TOK.cobaltSoft : 'transparent',
+        color: active ? TOK.cobaltDeep : TOK.ink,
         cursor: 'pointer',
         fontSize: 15,
-        fontWeight: 500,
+        fontWeight: active ? 700 : 500,
         textAlign: 'left',
         whiteSpace: 'nowrap',
         ...style
       }
-    }, h('span', { style: { width: 15, flex: '0 0 auto', fontSize: 14, color: active ? TOK.cobalt : TOK.inkDim } }, active ? '✓' : ''), h('span', null, label));
+    }, h('span', null, label));
     const toneOpts = [
       ['hanzi', TextT, this.t('tb_tone_characters')],
       ['hanziSegments', HanziSegmentIcon, this.t('tb_tone_hanziwave')],
