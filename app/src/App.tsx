@@ -2087,8 +2087,13 @@ Respond with ONLY a JSON object:
     };
     tick();
 
+    // IMPORTANT: never open a second WebKit microphone on native. The native
+    // speech-recognition plugin already owns the shared iOS AVAudioSession, and
+    // a concurrent getUserMedia grab conflicts with it — crashing the app after
+    // a couple of dictation attempts. On native the synthetic wave above drives
+    // the bar; the real-mic analyser is web-only.
     const AC = (typeof window !== 'undefined') && (window.AudioContext || window.webkitAudioContext);
-    if (AC && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    if (AC && !Capacitor.isNativePlatform() && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
         if (!this._waveActive) { stream.getTracks().forEach(tr => tr.stop()); return; }
         this._waveStream = stream;
