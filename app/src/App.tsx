@@ -929,6 +929,11 @@ export default class App extends React.Component {
     // Freehand draw owns a full-screen overlay with its own exit — don't let a
     // background tap disturb it.
     if (this.state.drawMode) { this._act = null; return; }
+    // Tapping away commits any open edit. The blur-driven finishEdit can't fire
+    // after voice dictation (the textarea is never focused on native), so do it
+    // explicitly here — otherwise the "typing box" lingers and the block stays
+    // un-selectable. Skipped mid-dictation (the dictation bar owns that).
+    if (this.state.editingId != null && !this.state.recording) this.finishEdit(this.state.editingId);
     // left-drag on empty space -> marquee box-select; a single tap dismisses the
     // selection AND exits the Wave Edit pen tool (which is tied to that block).
     this._act = { type: 'maybe-marquee', sx: e.clientX, sy: e.clientY, add: e.shiftKey, base: e.shiftKey ? this.state.selectedIds.slice() : [], moved: false, hadSel: this.state.selectedIds.length > 0 };
@@ -1724,6 +1729,10 @@ Respond with ONLY a JSON object:
     // A single tap on empty canvas dismisses the selection and exits the Wave
     // Edit pen tool (freehand draw is untouched — it has its own overlay/exit).
     if (a && a.type === 'pan' && !a.moved && !this.state.drawMode) {
+      // Commit any open edit — after voice dictation the textarea isn't focused,
+      // so the blur-driven finishEdit never fires; do it explicitly so the typing
+      // box dismisses and the text becomes selectable.
+      if (this.state.editingId != null && !this.state.recording) this.finishEdit(this.state.editingId);
       this.setState({ selectedIds: [], waveEditId: null, toolbarMenu: null, customColorOpen: false, customColorText: null });
     }
     this.onUp({});
