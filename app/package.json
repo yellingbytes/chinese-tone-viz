@@ -19,6 +19,7 @@
     "@capacitor/cli": "^6.2.1",
     "@capacitor/core": "^6.2.1",
     "@capacitor/ios": "^6.2.1",
+    "@capacitor/keyboard": "^6.0.4",
     "@phosphor-icons/react": "^2.1.10",
     "opencc-js": "^1.0.5",
     "pinyin-pro": "^3.26.0",
