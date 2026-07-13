@@ -109,7 +109,11 @@ const STRINGS = {
   script_traditional: { en: '繁 Traditional', zh: '繁體' },
   resize_tooltip: { en: 'Drag to resize', zh: '拖动以调整大小' },
   wrap_explicit_tooltip: { en: 'Drag to set wrap width · double-click for auto width', zh: '拖动设置换行宽度 · 双击恢复自动宽度' },
-  wrap_auto_tooltip: { en: 'Drag left to wrap text', zh: '向左拖动以换行' },
+  wrap_auto_tooltip: { en: 'Drag the right handle to wrap text', zh: '拖动右侧把手设置换行' },
+  chinese_keyboard_prompt: {
+    en: 'Use a Chinese keyboard (Simplified or Traditional). If it is missing: Settings > General > Keyboard > Keyboards > Add New Keyboard > Chinese.',
+    zh: '请使用中文键盘（简体或繁體）。若没有：设置 > 通用 > 键盘 > 键盘 > 添加新键盘 > 中文。'
+  },
   toolbar_style: { en: 'Style', zh: '样式' },
   toolbar_tone: { en: 'Tone', zh: '声调' },
   toolbar_wave: { en: 'Wave', zh: '声调波' },
@@ -168,6 +172,8 @@ const pinyinPro = { pinyin };
 const OpenCC = (OpenCCImport && OpenCCImport.Converter)
   ? OpenCCImport
   : ((OpenCCImport && OpenCCImport.default) || OpenCCImport);
+const CHINESE_TEXT_CHAR_RE = /^[\p{Script=Han}\s\u3000-\u303f\ufe10-\ufe1f\ufe30-\ufe4f\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65，。、；：？！《》〈〉（）【】「」『』“”‘’…—·,.!?;:()[\]{}'"<>-]$/u;
+const filterChineseText = (value) => Array.from(String(value || '')).filter(ch => CHINESE_TEXT_CHAR_RE.test(ch)).join('');
 
 export default class App extends React.Component {
   /* ===================================================================
@@ -365,6 +371,18 @@ export default class App extends React.Component {
     return { tone: t, kind: 'hanzi' };
   }
 
+  // Mandarin third-tone sandhi for the drawn surface tone wave:
+  // when two third-tone Hanzi are directly adjacent, the first one is spoken
+  // and drawn as second tone. Spaces, punctuation, and newlines break adjacency.
+  applyThirdToneSandhi(infos) {
+    if (!infos || infos.length < 2) return infos || [];
+    const base = infos.map(info => info && info.kind === 'hanzi' ? info.tone : null);
+    return infos.map((info, i) => {
+      if (info && info.kind === 'hanzi' && base[i] === 3 && base[i + 1] === 3) return { ...info, tone: 2, sandhiFrom: 3 };
+      return info;
+    });
+  }
+
   /* ===================================================================
    *  toneGeometry  —  each Hanzi owns a segment; next start === prev end.
    *  Using SVG skewY so end = (x+advance, y+deltaY) holds EXACTLY.
@@ -472,22 +490,11 @@ export default class App extends React.Component {
   layoutBlock(text, M, wrapWidth, overrides) {
     const FS = M.FS;
     const LINE_SPACING = (M.LINE_SPACING != null) ? M.LINE_SPACING : FS * 0.55;
-    // Three modes: explicit width (user dragged the handle -> fixed-width box),
-    // no-wrap (Infinity, used to measure natural width), and auto. Auto still wraps
-    // at a readable default so long pasted/typed text breaks consistently instead of
-    // running off forever — same wrapping logic, just an automatic measure.
+    // Two wrapping modes: explicit width (user dragged the right handle), or no-wrap.
+    // Canvas zoom must never change wrapping; it only magnifies the world.
     const explicit = (typeof wrapWidth === 'number') && wrapWidth > 0 && wrapWidth !== Infinity;
     const noWrap = wrapWidth === Infinity;
-    // Auto-wrap default: a readable ~14-character line, capped to the visible
-    // viewport (in world units) so it also fits on phones — without an
-    // explicit width, so the bbox below still hugs the actual wrapped content
-    // instead of being forced to the full line width.
-    let DEFAULT_WRAP = M.ADV * 14;
-    if (typeof window !== 'undefined' && window.innerWidth) {
-      const z = this.state.zoom || 1;
-      DEFAULT_WRAP = Math.min(DEFAULT_WRAP, (window.innerWidth * 0.86) / z);
-    }
-    const effW = noWrap ? null : (explicit ? wrapWidth : DEFAULT_WRAP);
+    const effW = (noWrap || !explicit) ? null : wrapWidth;
     const doWrap = effW != null;
     const paras = (text || '').split('\n');
     const all = [];
@@ -505,7 +512,8 @@ export default class App extends React.Component {
         }
         infos.push(info);
       }
-      const subLines = this.wrapInfos(para, infos, M, doWrap ? effW : Infinity, globalBase);
+      const surfaceInfos = this.applyThirdToneSandhi(infos);
+      const subLines = this.wrapInfos(para, surfaceInfos, M, doWrap ? effW : Infinity, globalBase);
       globalBase += para.length + 1;                            // +1 for the '\n' separator
 
       for (const entries of subLines) {
@@ -1095,17 +1103,29 @@ export default class App extends React.Component {
     let gi = 0;
     for (const para of (block.text || '').split('\n')) {
       const tp = this.lineTones(para);
+      const baseInfos = [];
+      const sourceGis = [];
       for (let i = 0; i < para.length; i++) {
         const info = this.detectTone(para[i], tp ? tp[i] : null);
-        if (info.kind === 'hanzi' || info.kind === 'neutral') {
-          const o = info.kind === 'neutral' ? 0 : info.tone;
-          const useOverride = ov[gi] != null && (focusGi == null || gi === focusGi);
-          const t = useOverride ? ov[gi] : o;
+        baseInfos.push(info);
+        sourceGis.push(gi++);
+      }
+      const origInfos = this.applyThirdToneSandhi(baseInfos);
+      const targetBaseInfos = baseInfos.map((info, i) => {
+        const sourceGi = sourceGis[i];
+        const useOverride = ov[sourceGi] != null && (focusGi == null || sourceGi === focusGi);
+        return (useOverride && info.kind === 'hanzi') ? { ...info, tone: ov[sourceGi] } : info;
+      });
+      const targetInfos = this.applyThirdToneSandhi(targetBaseInfos);
+      for (let i = 0; i < para.length; i++) {
+        const oi = origInfos[i], ti = targetInfos[i], sourceGi = sourceGis[i];
+        if (oi.kind === 'hanzi' || oi.kind === 'neutral') {
+          const o = oi.kind === 'neutral' ? 0 : oi.tone;
+          const t = ti.kind === 'neutral' ? 0 : ti.tone;
           if (t !== o) changed.push(target.length);
-          entries.push({ gi, hi: target.length, ch: para[i], origTone: o, targetTone: t });
+          entries.push({ gi: sourceGi, hi: target.length, ch: para[i], origTone: o, targetTone: t });
           orig.push(o); target.push(t);
         }
-        gi++;
       }
       gi++;   // '\n'
     }
@@ -1139,8 +1159,11 @@ export default class App extends React.Component {
     const got = [];
     for (const para of (text || '').split('\n')) {
       const tp = this.lineTones(para);
+      const infos = [];
       for (let i = 0; i < para.length; i++) {
-        const info = this.detectTone(para[i], tp ? tp[i] : null);
+        infos.push(this.detectTone(para[i], tp ? tp[i] : null));
+      }
+      for (const info of this.applyThirdToneSandhi(infos)) {
         if (info.kind === 'hanzi' || info.kind === 'neutral') got.push(info.kind === 'neutral' ? 0 : info.tone);
       }
     }
@@ -1799,7 +1822,46 @@ Respond with ONLY a JSON object:
     this.pushHistory();
     this.setState(s => ({ blocks: s.blocks.filter(b => !sel.includes(b.id)), selectedIds: [], editingId: null, toolbarMenu: null }));
   }
-  editText(id, v) {
+  promptChineseKeyboard() {
+    const now = Date.now();
+    if (now - (this._lastChineseKeyboardPrompt || 0) < 1200) return;
+    this._lastChineseKeyboardPrompt = now;
+    this.flash(this.t('chinese_keyboard_prompt'), 5200);
+  }
+  cleanChineseText(v, opts = {}) {
+    if (opts.allowIntermediate) return v;
+    const clean = filterChineseText(v);
+    if (clean !== v) this.promptChineseKeyboard();
+    return clean;
+  }
+  onChineseBeforeInput(e) {
+    const native = e.nativeEvent || e;
+    if (this._imeComposing || native.isComposing) return;
+    const type = native.inputType || '';
+    if (type.startsWith('delete') || type === 'insertLineBreak') return;
+    const data = native.data;
+    if (data && filterChineseText(data) !== data) {
+      e.preventDefault();
+      this.promptChineseKeyboard();
+    }
+  }
+  onChinesePaste(e, id) {
+    const text = e.clipboardData && e.clipboardData.getData ? e.clipboardData.getData('text') : '';
+    if (!text) return;
+    const clean = filterChineseText(text);
+    if (clean !== text) this.promptChineseKeyboard();
+    e.preventDefault();
+    const ta = e.currentTarget;
+    const start = ta.selectionStart || 0;
+    const end = ta.selectionEnd || start;
+    const next = String(ta.value || '').slice(0, start) + clean + String(ta.value || '').slice(end);
+    this.editText(id, next);
+    requestAnimationFrame(() => {
+      try { ta.selectionStart = ta.selectionEnd = start + clean.length; } catch (err) {}
+    });
+  }
+  editText(id, v, opts = {}) {
+    v = this.cleanChineseText(v, opts);
     if (!this._editDirty) { this._undo.push(this._editPre || this.snap()); if (this._undo.length > 120) this._undo.shift(); this._redo = []; this._editDirty = true; }
     // If you hand-edit while dictating, adopt your text as the new anchor so the
     // next recognized words append after your edit instead of overwriting it.
@@ -1831,14 +1893,9 @@ Respond with ONLY a JSON object:
     });
   }
   // create an empty, editable text block at the centre of the screen
-  // On phones a scale-1 block (70px glyphs) overflows the viewport and never
-  // wraps to the screen, so new blocks default to a smaller scale. Wrapping
-  // itself is handled by layoutBlock's viewport-aware auto-wrap (see
-  // DEFAULT_WRAP there) rather than an explicit block.width — an explicit
-  // width marks the block as user-resized and forces its bounding box to
-  // span the full width even when the wrapped text is shorter, which left a
-  // dead-space gap on the right. Auto-wrap keeps the box hugging the actual
-  // content. Desktop keeps full scale.
+  // On phones a scale-1 block (70px glyphs) overflows the viewport, so new
+  // blocks default to a smaller scale. Text stays on one line until the user
+  // deliberately drags the right handle to set a wrap width. Desktop keeps full scale.
   _blockDefaults() {
     const W = (typeof window !== 'undefined' && window.innerWidth) || 0;
     if (!W || W >= 640) return {};
@@ -2271,9 +2328,10 @@ Respond with ONLY a JSON object:
     if (editing) {
       const text = block.text || '';
       const rows = Math.max(1, text.split('\n').length);
+      const visualRows = lay.specs.length ? (Math.max(...lay.specs.map(s => s.line || 0)) + 1) : rows;
       const LINE_H = 22, PAD_V = 20;
       const taW = bbox.w;   // match the block box exactly
-      const taH = Math.max(46, rows * LINE_H + PAD_V);
+      const taH = Math.max(46, (block.width != null ? visualRows : rows) * LINE_H + PAD_V);
       // While voice-dictating into this block on a native platform, keep the
       // on-screen keyboard down: don't auto-focus, and make the field read-only
       // with no input mode. The text streams in from speech; the keyboard would
@@ -2284,7 +2342,17 @@ Respond with ONLY a JSON object:
         readOnly: dictatingHere,
         inputMode: dictatingHere ? 'none' : undefined,
         value: block.text,
-        onChange: (e) => this.editText(block.id, e.target.value),
+        lang: this.state.script === 'traditional' ? 'zh-Hant' : 'zh-Hans',
+        autoCapitalize: 'off',
+        autoCorrect: 'off',
+        autoComplete: 'off',
+        enterKeyHint: 'done',
+        wrap: block.width != null ? 'soft' : 'off',
+        onBeforeInput: (e) => this.onChineseBeforeInput(e),
+        onPaste: (e) => this.onChinesePaste(e, block.id),
+        onCompositionStart: () => { this._imeComposing = true; },
+        onCompositionEnd: (e) => { this._imeComposing = false; this.editText(block.id, e.currentTarget.value); },
+        onChange: (e) => this.editText(block.id, e.target.value, { allowIntermediate: this._imeComposing || (e.nativeEvent && e.nativeEvent.isComposing) }),
         onMouseDown: (e) => e.stopPropagation(),
         onBlur: () => this.finishEdit(block.id),
         spellCheck: false,
@@ -2296,6 +2364,9 @@ Respond with ONLY a JSON object:
           padding: '10px 13px', fontSize: '17px', fontWeight: 500, lineHeight: 1.3,
           color: TOK.ink, background: TOK.surfaceStrong, resize: 'none',
           border: `1.5px solid ${TOK.cobalt}`, borderRadius: R.md, outline: 'none',
+          overflowX: block.width != null ? 'hidden' : 'auto',
+          overflowY: 'auto',
+          whiteSpace: block.width != null ? 'pre-wrap' : 'pre',
           boxShadow: '0 12px 32px rgba(36,87,214,0.14), 0 1px 2px rgba(57,43,24,0.08)', zIndex: 30,
           backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)',
           pointerEvents: 'auto', userSelect: 'text', WebkitUserSelect: 'text',
@@ -2853,7 +2924,7 @@ Respond with ONLY a JSON object:
   setCanvasMode(m) { this.setState({ canvasMode: m, toolbarMenu: null }); }
   toggleEdgeJoints() { this.setState(s => ({ showEdgeJoints: !s.showEdgeJoints })); }
   resetCanvas() { this.pushHistory(); this.setState({ blocks: [], selectedIds: [], drawGuides: [], editingId: null, activeSheet: null, toolbarMenu: null, moreMenuOpen: false }); }
-  flash(msg) { this.setState({ toast: msg }); clearTimeout(this._toastT); this._toastT = setTimeout(() => this.setState({ toast: '' }), 1800); }
+  flash(msg, duration = 1800) { this.setState({ toast: msg }); clearTimeout(this._toastT); this._toastT = setTimeout(() => this.setState({ toast: '' }), duration); }
   share() { this.flash('Export coming soon'); }
   playMotion() {
     const spd = this.state.motionSpeed || 1;
@@ -3327,7 +3398,7 @@ Respond with ONLY a JSON object:
     ) : null;
 
     // -- toast -----------------------------------------------------------------
-    const toast = st.toast ? h('div', { key: 'toast', style: { position: 'fixed', left: '50%', bottom: 'calc(100px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', background: TOK.ink, color: '#fff', fontSize: 13, fontWeight: 600, padding: '9px 15px', borderRadius: R.md, zIndex: 90, boxShadow: '0 8px 24px rgba(28,25,23,0.28)' } }, st.toast) : null;
+    const toast = st.toast ? h('div', { key: 'toast', style: { position: 'fixed', left: '50%', bottom: 'calc(100px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', background: TOK.ink, color: '#fff', fontSize: 13, fontWeight: 600, lineHeight: 1.35, padding: '10px 15px', borderRadius: R.md, zIndex: 90, boxShadow: '0 8px 24px rgba(28,25,23,0.28)', width: 'max-content', maxWidth: 'min(520px, calc(100vw - 32px))', whiteSpace: 'normal', textAlign: 'center' } }, st.toast) : null;
     const splash = st.splashVisible ? this.renderSplash(h) : null;
 
     return h('div', {
