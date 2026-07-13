@@ -8,6 +8,7 @@ import React from 'react';
 import { pinyin } from 'pinyin-pro';
 import * as OpenCCImport from 'opencc-js';
 import { Capacitor } from '@capacitor/core';
+import { Keyboard } from '@capacitor/keyboard';
 import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import {
   ArrowCounterClockwise, ArrowClockwise, Gear,
@@ -829,6 +830,14 @@ export default class App extends React.Component {
     if (typeof window !== 'undefined' && window.visualViewport) {
       this._onVvResize = () => { if (this._centerPendingId != null) this.centerOnBlock(this._centerPendingId); };
       window.visualViewport.addEventListener('resize', this._onVvResize);
+    }
+    // iOS keyboard chrome: drop the input-accessory bar (the prev/next/done
+    // strip above the keyboard) and disable the web view's auto-scroll-to-input
+    // so the centred editing block isn't yanked to the top when the keyboard
+    // opens. Paired with Keyboard resize:none (see capacitor.config).
+    if (Capacitor.isNativePlatform()) {
+      try { Keyboard.setAccessoryBarVisible({ isVisible: false }); } catch (e) {}
+      try { Keyboard.setScroll({ isDisabled: true }); } catch (e) {}
     }
     this.ensureUsedFonts();
     this._splashExitT = setTimeout(() => this.setState({ splashExiting: true }), 1900);
@@ -2262,19 +2271,15 @@ Respond with ONLY a JSON object:
       }
     }, children);
 
-    // editing textarea (sibling overlay, not clipped) — sized to fit the
-    // actual typed content (grows/shrinks with line count + longest line)
-    // instead of a fixed box, so a single short word isn't stuck in a wide
-    // 280px field and a longer passage isn't clipped to one fixed height.
+    // editing textarea (sibling overlay, not clipped). Its width tracks the
+    // block's own box (bbox.w) so the input field lines up exactly under the
+    // text, growing/shrinking with the content just like the block does.
     let editor = null;
     if (editing) {
       const text = block.text || '';
-      const lines = text.split('\n');
-      const rows = Math.max(1, lines.length);
-      const maxLineLen = Math.max(1, ...lines.map(l => l.length));
-      const LINE_H = 22, CHAR_W = 17, PAD_V = 20, PAD_H = 26;
-      const viewportW = typeof window !== 'undefined' ? window.innerWidth : 740;
-      const taW = Math.max(90, Math.min(maxLineLen * CHAR_W + PAD_H, Math.min(420, viewportW - 32)));
+      const rows = Math.max(1, text.split('\n').length);
+      const LINE_H = 22, PAD_V = 20;
+      const taW = bbox.w;   // match the block box exactly
       const taH = Math.max(46, rows * LINE_H + PAD_V);
       // While voice-dictating into this block on a native platform, keep the
       // on-screen keyboard down: don't auto-focus, and make the field read-only
