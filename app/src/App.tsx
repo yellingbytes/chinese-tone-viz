@@ -1709,22 +1709,15 @@ Respond with ONLY a JSON object:
       const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
       const cx = (a.clientX + b.clientX) / 2, cy = (a.clientY + b.clientY) / 2;
       if (!this._pinch) {
-        // pinch on a single selected block -> scale the text; otherwise zoom canvas
-        const bid = this.state.selectedIds.length === 1 ? this.state.selectedIds[0] : null;
-        let pcx, pcy;
-        if (bid != null) { const r = this.blockWorldRect(this.state.blocks.find(x => x.id === bid), this.metrics()); pcx = r.x + r.w / 2; pcy = r.y + r.h / 2; }
-        this._pinch = { dist, cx, cy, bid, pcx, pcy };
+        this._pinch = { dist, cx, cy };
         return;
       }
+      // Pinch always zooms the canvas. A text box is scaled ONLY by dragging its
+      // corner scale handle — pinch never resizes the block itself.
       const factor = this._pinch.dist > 0 ? dist / this._pinch.dist : 1;
-      if (this._pinch.bid != null) {
-        const cur = this.state.blocks.find(x => x.id === this._pinch.bid);
-        if (cur) this.applyScale(this._pinch.bid, (cur.scale || 1) * factor, this._pinch.pcx, this._pinch.pcy);
-      } else {
-        this.zoomBy(factor, cx, cy);
-        const ddx = cx - this._pinch.cx, ddy = cy - this._pinch.cy;
-        if (ddx || ddy) this.setState(s => ({ panX: s.panX + ddx, panY: s.panY + ddy }));
-      }
+      this.zoomBy(factor, cx, cy);
+      const ddx = cx - this._pinch.cx, ddy = cy - this._pinch.cy;
+      if (ddx || ddy) this.setState(s => ({ panX: s.panX + ddx, panY: s.panY + ddy }));
       this._pinch = { ...this._pinch, dist, cx, cy };
       return;
     }
