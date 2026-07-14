@@ -2925,6 +2925,9 @@ Respond with ONLY a JSON object:
   toggleEdgeJoints() { this.setState(s => ({ showEdgeJoints: !s.showEdgeJoints })); }
   resetCanvas() { this.pushHistory(); this.setState({ blocks: [], selectedIds: [], drawGuides: [], editingId: null, activeSheet: null, toolbarMenu: null, moreMenuOpen: false }); }
   flash(msg, duration = 1800) { this.setState({ toast: msg }); clearTimeout(this._toastT); this._toastT = setTimeout(() => this.setState({ toast: '' }), duration); }
+  // Open a URL in the system browser. On Capacitor a _blank window.open is
+  // routed to Safari; on web it opens a new tab.
+  openExternal(url) { try { window.open(url, '_blank', 'noopener,noreferrer'); } catch (e) {} }
   share() { this.flash('Export coming soon'); }
   playMotion() {
     const spd = this.state.motionSpeed || 1;
@@ -3355,7 +3358,17 @@ Respond with ONLY a JSON object:
         h('div', { style: { width: 38, height: 4, borderRadius: 4, background: 'rgba(46,39,27,0.18)', margin: '1px auto 14px' } }),
         h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 } },
           h('div', { style: { fontSize: 18, fontWeight: 720, letterSpacing: 0, color: TOK.ink } }, title),
-          h('button', { onClick: onClose, 'aria-label': this.t('close'), style: { width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: R.md, border: `1px solid ${TOK.hairline}`, background: 'rgba(255,255,255,0.44)', cursor: 'pointer', color: TOK.inkSoft } }, h(X, { size: 16 }))
+          h('button', {
+            onClick: onClose, 'aria-label': this.t('close'),
+            onMouseEnter: (e) => { e.currentTarget.style.background = 'rgba(46,39,27,0.12)'; },
+            onMouseLeave: (e) => { e.currentTarget.style.background = 'rgba(46,39,27,0.07)'; },
+            style: {
+              width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              borderRadius: '50%', border: 'none', background: 'rgba(46,39,27,0.07)',
+              cursor: 'pointer', color: TOK.inkSoft, flex: '0 0 auto',
+              transition: 'background 0.15s ease', WebkitTapHighlightColor: 'transparent'
+            }
+          }, h(X, { size: 15, weight: 'bold' }))
         ),
         body
       )
@@ -3484,9 +3497,10 @@ Respond with ONLY a JSON object:
   }
 
   sheetAbout(v, h, sheet) {
-    // A tiny tone-stroke glyph, one per tone class, for the legend.
-    const toneGlyph = (d, accent) => h('svg', { width: 34, height: 24, viewBox: '0 0 34 24', fill: 'none', style: { flex: '0 0 auto' } },
-      h('path', { d, stroke: accent ? TOK.cobalt : TOK.ink, strokeWidth: 3, strokeLinecap: 'round', strokeLinejoin: 'round', fill: 'none' }));
+    // A tiny tone-stroke glyph, one per tone class, for the legend — all in a
+    // single neutral ink so the sheet reads sleek and monochrome.
+    const toneGlyph = (d) => h('svg', { width: 34, height: 24, viewBox: '0 0 34 24', fill: 'none', style: { flex: '0 0 auto' } },
+      h('path', { d, stroke: TOK.ink, strokeWidth: 3, strokeLinecap: 'round', strokeLinejoin: 'round', fill: 'none' }));
     const tones = [
       ['一', this.t('tone_first'), this.t('kind_flat'), 'M4 12 H30'],
       ['ˊ', this.t('tone_second'), this.t('kind_rising'), 'M4 20 L30 6'],
@@ -3497,7 +3511,7 @@ Respond with ONLY a JSON object:
       display: 'flex', flexDirection: 'column', gap: 6, padding: '11px 10px', borderRadius: 14,
       background: 'rgba(255,255,255,0.4)', border: `1px solid ${TOK.hairline}`
     } },
-      toneGlyph(d, i === 1 || i === 2),
+      toneGlyph(d),
       h('div', { style: { fontSize: 11.5, fontWeight: 700, color: TOK.ink } }, name),
       h('div', { style: { fontSize: 10.5, fontWeight: 600, color: TOK.inkSoft, letterSpacing: 0.2, textTransform: 'lowercase' } }, kind)
     );
@@ -3509,7 +3523,7 @@ Respond with ONLY a JSON object:
           h('span', { style: { fontSize: 22, fontWeight: 800, color: TOK.ink, letterSpacing: -0.2 } }, 'Tone Canvas'),
           h('span', { style: { fontSize: 15, fontWeight: 600, color: TOK.inkSoft, fontFamily: "'Noto Sans SC', sans-serif" } }, '声调画布')
         ),
-        h('div', { style: { fontSize: 12.5, fontWeight: 650, color: TOK.cobaltDeep } }, this.t('about_tagline'))
+        h('div', { style: { fontSize: 12.5, fontWeight: 600, color: TOK.inkSoft, letterSpacing: 0.2 } }, this.t('about_tagline'))
       ),
       // intro
       h('p', { style: { margin: 0, fontSize: 14, lineHeight: 1.62, color: TOK.inkSoft, fontWeight: 500 } }, this.t('about_intro')),
@@ -3522,7 +3536,19 @@ Respond with ONLY a JSON object:
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, paddingTop: 14, borderTop: `1px solid ${TOK.sepSoft}` } },
         h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
           h('div', { style: { fontSize: 13, fontWeight: 750, color: TOK.ink } }, `${this.t('credit_prefix')} Nathan Guo`),
-          h('div', { style: { fontSize: 12, fontWeight: 600, color: TOK.inkSoft } }, '@yellingbytes')
+          h('a', {
+            href: 'https://linktr.ee/yellingbytes',
+            target: '_blank', rel: 'noopener noreferrer',
+            onClick: (e) => { e.preventDefault(); this.openExternal('https://linktr.ee/yellingbytes'); },
+            onMouseEnter: (e) => { e.currentTarget.style.color = TOK.ink; },
+            onMouseLeave: (e) => { e.currentTarget.style.color = TOK.inkSoft; },
+            style: {
+              width: 'fit-content', fontSize: 12, fontWeight: 600, color: TOK.inkSoft,
+              textDecoration: 'underline', textDecorationColor: 'rgba(46,39,27,0.28)',
+              textUnderlineOffset: '2.5px', cursor: 'pointer',
+              transition: 'color 0.15s ease', WebkitTapHighlightColor: 'transparent'
+            }
+          }, '@yellingbytes')
         ),
         h('span', { style: { marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, color: TOK.inkDim, background: 'rgba(46,39,27,0.055)', padding: '4px 10px', borderRadius: 999 } }, `v${APP_VERSION}`)
       )
