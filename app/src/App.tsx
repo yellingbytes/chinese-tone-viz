@@ -3016,7 +3016,7 @@ Respond with ONLY a JSON object:
         }, bars)
       : h('div', { style: { flex: 1, minWidth: 0, height: ROW, paddingLeft: 8, display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' } },
           h('span', { style: { width: 8, height: 8, borderRadius: '50%', flex: '0 0 auto', background: TOK.inkDim, animation: 'tc-pulse 1.2s ease-out infinite' } }),
-          h('span', { style: { fontSize: 13, fontWeight: 600, color: TOK.inkSoft, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, status)
+          h('span', { style: { fontSize: 13.5, fontWeight: 650, color: TOK.inkSoft, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, status)
         );
     return h('div', {
       key: 'dictbar',
@@ -3424,19 +3424,19 @@ Respond with ONLY a JSON object:
     const drawChip = null;
     const drawHint = st.drawMode ? h('div', { key: 'drawhint', style: { ...topBar2, display: 'flex', gap: 8, alignItems: 'center' } },
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 7, padding: '9px 15px', borderRadius: 999, background: TOK.surfaceStrong, border: `1px solid ${TOK.hairline}`, boxShadow: TOK.shadowSoft, fontSize: 13.5, fontWeight: 650, color: TOK.ink, backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)' } },
-        h(PencilSimple, { size: 17, color: TOK.cobalt }), this.t('draw_hint')),
-      h('button', { onClick: () => this.setState({ drawMode: false, drawPath: null }), 'aria-label': this.t('cancel'), style: { width: 34, height: 34, borderRadius: '50%', border: `1px solid ${TOK.hairline}`, background: TOK.surfaceStrong, cursor: 'pointer', color: TOK.inkSoft, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: TOK.shadowSoft } }, h(X, { size: 16 }))) : null;
+        h(PencilSimple, { size: 17, color: TOK.cobalt, weight: 'bold' }), this.t('draw_hint')),
+      h('button', { onClick: () => this.setState({ drawMode: false, drawPath: null }), 'aria-label': this.t('cancel'), style: { width: 30, height: 30, borderRadius: '50%', border: 'none', background: 'rgba(46,39,27,0.07)', cursor: 'pointer', color: TOK.inkSoft, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' } }, h(X, { size: 15, weight: 'bold' }))) : null;
 
     // manual chip only when there's an override, no key set, and no transform running
     const waveBlk = st.waveEditId != null ? st.blocks.find(b => b.id === st.waveEditId) : null;
     const hasOverrides = waveBlk && waveBlk.toneOverrides && Object.keys(waveBlk.toneOverrides).length > 0;
     const rewriteChip = (!xf && hasOverrides && !st.activeSheet && !this.hasAiAccess()) ? h('div', { key: 'rwchip', style: barBase },
-      h('button', { onClick: () => this.rewriteByTone(st.waveEditId), style: { display: 'flex', alignItems: 'center', gap: 7, padding: '11px 18px', borderRadius: 999, border: 'none', background: TOK.ink, color: '#fff', fontWeight: 600, fontSize: 14, boxShadow: '0 8px 24px rgba(28,25,23,0.28)', cursor: 'pointer' } },
+      h('button', { onClick: () => this.rewriteByTone(st.waveEditId), style: { display: 'flex', alignItems: 'center', gap: 7, padding: '11px 18px', borderRadius: 999, border: 'none', background: TOK.ink, color: '#fff', fontWeight: 650, fontSize: 13.5, boxShadow: '0 8px 24px rgba(28,25,23,0.28)', cursor: 'pointer' } },
         h(Sparkle, { size: 17, weight: 'fill' }), '按声调改写文字')
     ) : null;
 
     // -- toast -----------------------------------------------------------------
-    const toast = st.toast ? h('div', { key: 'toast', style: { position: 'fixed', left: '50%', bottom: 'calc(100px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', background: TOK.ink, color: '#fff', fontSize: 13, fontWeight: 600, lineHeight: 1.35, padding: '10px 15px', borderRadius: R.md, zIndex: 90, boxShadow: '0 8px 24px rgba(28,25,23,0.28)', width: 'max-content', maxWidth: 'min(520px, calc(100vw - 32px))', whiteSpace: 'normal', textAlign: 'center' } }, st.toast) : null;
+    const toast = st.toast ? h('div', { key: 'toast', style: { position: 'fixed', left: '50%', bottom: 'calc(100px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', background: TOK.ink, color: '#fff', fontSize: 13.5, fontWeight: 650, lineHeight: 1.35, padding: '10px 18px', borderRadius: 999, zIndex: 90, boxShadow: '0 8px 24px rgba(28,25,23,0.28)', width: 'max-content', maxWidth: 'min(520px, calc(100vw - 32px))', whiteSpace: 'normal', textAlign: 'center' } }, st.toast) : null;
     const splash = st.splashVisible ? this.renderSplash(h) : null;
 
     return h('div', {
