@@ -772,6 +772,7 @@ export default class App extends React.Component {
     defColor: '#161410',     // colour + weight applied to new blocks / shown in toolbar
     defWeight: 700,
     defFont: 'noto-sans',    // typeface applied to new blocks / shown in toolbar
+    defScale: null,          // last size the user set on any block; applied to new blocks too
     script: 'simplified',    // 'simplified' | 'traditional' — render-time glyph conversion
     uiLang: detectDefaultUiLang(), // 'en' | 'zh' — interface chrome language, not the canvas content
     addMenuOpen: false,      // "+ Add Text" split-button dropdown
@@ -878,6 +879,28 @@ export default class App extends React.Component {
     const vh = vv ? vv.height : window.innerHeight;
     const cx = vw / 2, cy = vh / 2 - 24;
     this.setState({ panX: cx - worldCx * z, panY: cy - worldCy * z });
+  }
+  // Wrap width (world units) applied to a dictation block so long speech wraps
+  // onto new lines to fit ~86% of the viewport instead of running off the edge.
+  _dictationWrapWidth() {
+    const z = this.state.zoom || 1;
+    const W = (typeof window !== 'undefined' && window.innerWidth) || 390;
+    return (W * 0.86) / z;
+  }
+  // Keep the newest dictated words visible: as the block grows downward, pan up
+  // so its bottom edge stays above the dictation bar. Only pans when the bottom
+  // has actually scrolled out of view, so it never fights a still-fitting block.
+  _followDictation(id) {
+    const b = this.state.blocks.find(x => x.id === id); if (!b) return;
+    const r = this.blockWorldRect(b, this.metrics());
+    const z = this.state.zoom || 1;
+    const vh = (typeof window !== 'undefined' && window.visualViewport && window.visualViewport.height) || (typeof window !== 'undefined' ? window.innerHeight : 780);
+    const visibleBottom = vh - 132;                       // clear the dictation bar
+    const bottomScreen = (r.y + r.h) * z + this.state.panY;
+    if (bottomScreen > visibleBottom) {
+      const dy = bottomScreen - visibleBottom;
+      this.setState(s => ({ panY: s.panY - dy }));
+    }
   }
   componentWillUnmount() {
     window.removeEventListener('mousemove', this._onMove);
@@ -1014,7 +1037,8 @@ export default class App extends React.Component {
     const newWidth = b.width != null ? b.width * (s / (b.scale || 1)) : b.width;
     const { bbox } = this.layoutBlock(this.glyphsText(b.text), this.scaleMetrics(this.metrics(), s), newWidth);
     const nx = cx - (bbox.x + bbox.w / 2), ny = cy - (bbox.y + bbox.h / 2);
-    this.setState(st => ({ blocks: st.blocks.map(x => x.id === id ? { ...x, scale: s, width: newWidth, x: nx, y: ny } : x) }));
+    // Remember this as the size for future new blocks (Text / Dictate / sample) too.
+    this.setState(st => ({ defScale: s, blocks: st.blocks.map(x => x.id === id ? { ...x, scale: s, width: newWidth, x: nx, y: ny } : x) }));
   }
   // scale every selected block to `s` about its own centre (Size presets)
   applyScaleSelected(s) {
@@ -1897,6 +1921,7 @@ Respond with ONLY a JSON object:
   // blocks default to a smaller scale. Text stays on one line until the user
   // deliberately drags the right handle to set a wrap width. Desktop keeps full scale.
   _blockDefaults() {
+    if (this.state.defScale != null) return { scale: this.state.defScale };
     const W = (typeof window !== 'undefined' && window.innerWidth) || 0;
     if (!W || W >= 640) return {};
     return { scale: 0.5 };
@@ -2012,7 +2037,7 @@ Respond with ONLY a JSON object:
     this.pushHistory();
     this._recBase = '';
     this.setState(s => ({
-      blocks: [...s.blocks, { id, x: p.x, y: p.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...defs }],
+      blocks: [...s.blocks, { id, x: p.x, y: p.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...defs, width: this._dictationWrapWidth() }],
       selectedIds: [id], editingId: id, recording: true, recStatus: 'Listening…'
     }), () => this.centerOnBlock(id));
     this._startWaveViz();
@@ -2042,7 +2067,7 @@ Respond with ONLY a JSON object:
       this.setState(s => ({
         blocks: s.blocks.map(b => b.id === bid ? { ...b, text } : b),
         recStatus: interim ? '… ' + interim.slice(-14) : 'Listening…'
-      }));
+      }), () => this._followDictation(bid));
     };
     r.onerror = (e) => {
       if (e.error === 'no-speech' || e.error === 'aborted') return;
@@ -2073,7 +2098,7 @@ Respond with ONLY a JSON object:
     this.pushHistory();
     this._recBase = ''; this._nativePartial = ''; this._nativeStt = true;
     this.setState(s => ({
-      blocks: [...s.blocks, { id, x: p.x, y: p.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...defs }],
+      blocks: [...s.blocks, { id, x: p.x, y: p.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...defs, width: this._dictationWrapWidth() }],
       selectedIds: [id], editingId: id, recording: true, recStatus: 'Starting…'
     }), () => this.centerOnBlock(id));
     this._startWaveViz();
@@ -2085,7 +2110,7 @@ Respond with ONLY a JSON object:
       this.setState(s => ({
         blocks: s.blocks.map(b => b.id === bid ? { ...b, text } : b),
         recStatus: this._nativePartial ? '… ' + this._nativePartial.slice(-14) : 'Listening…'
-      }));
+      }), () => this._followDictation(bid));
     };
     const begin = () => SpeechRecognition.start({ language: 'zh-CN', maxResults: 1, partialResults: true, popup: false });
     try {
@@ -2991,7 +3016,7 @@ Respond with ONLY a JSON object:
         }, bars)
       : h('div', { style: { flex: 1, minWidth: 0, height: ROW, paddingLeft: 8, display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' } },
           h('span', { style: { width: 8, height: 8, borderRadius: '50%', flex: '0 0 auto', background: TOK.inkDim, animation: 'tc-pulse 1.2s ease-out infinite' } }),
-          h('span', { style: { fontSize: 13, fontWeight: 600, color: TOK.inkSoft, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, status)
+          h('span', { style: { fontSize: 13.5, fontWeight: 650, color: TOK.inkSoft, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, status)
         );
     return h('div', {
       key: 'dictbar',
@@ -3399,19 +3424,19 @@ Respond with ONLY a JSON object:
     const drawChip = null;
     const drawHint = st.drawMode ? h('div', { key: 'drawhint', style: { ...topBar2, display: 'flex', gap: 8, alignItems: 'center' } },
       h('div', { style: { display: 'flex', alignItems: 'center', gap: 7, padding: '9px 15px', borderRadius: 999, background: TOK.surfaceStrong, border: `1px solid ${TOK.hairline}`, boxShadow: TOK.shadowSoft, fontSize: 13.5, fontWeight: 650, color: TOK.ink, backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)' } },
-        h(PencilSimple, { size: 17, color: TOK.cobalt }), this.t('draw_hint')),
-      h('button', { onClick: () => this.setState({ drawMode: false, drawPath: null }), 'aria-label': this.t('cancel'), style: { width: 34, height: 34, borderRadius: '50%', border: `1px solid ${TOK.hairline}`, background: TOK.surfaceStrong, cursor: 'pointer', color: TOK.inkSoft, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: TOK.shadowSoft } }, h(X, { size: 16 }))) : null;
+        h(PencilSimple, { size: 17, color: TOK.cobalt, weight: 'bold' }), this.t('draw_hint')),
+      h('button', { onClick: () => this.setState({ drawMode: false, drawPath: null }), 'aria-label': this.t('cancel'), style: { width: 30, height: 30, borderRadius: '50%', border: 'none', background: 'rgba(46,39,27,0.07)', cursor: 'pointer', color: TOK.inkSoft, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' } }, h(X, { size: 15, weight: 'bold' }))) : null;
 
     // manual chip only when there's an override, no key set, and no transform running
     const waveBlk = st.waveEditId != null ? st.blocks.find(b => b.id === st.waveEditId) : null;
     const hasOverrides = waveBlk && waveBlk.toneOverrides && Object.keys(waveBlk.toneOverrides).length > 0;
     const rewriteChip = (!xf && hasOverrides && !st.activeSheet && !this.hasAiAccess()) ? h('div', { key: 'rwchip', style: barBase },
-      h('button', { onClick: () => this.rewriteByTone(st.waveEditId), style: { display: 'flex', alignItems: 'center', gap: 7, padding: '11px 18px', borderRadius: 999, border: 'none', background: TOK.ink, color: '#fff', fontWeight: 600, fontSize: 14, boxShadow: '0 8px 24px rgba(28,25,23,0.28)', cursor: 'pointer' } },
+      h('button', { onClick: () => this.rewriteByTone(st.waveEditId), style: { display: 'flex', alignItems: 'center', gap: 7, padding: '11px 18px', borderRadius: 999, border: 'none', background: TOK.ink, color: '#fff', fontWeight: 650, fontSize: 13.5, boxShadow: '0 8px 24px rgba(28,25,23,0.28)', cursor: 'pointer' } },
         h(Sparkle, { size: 17, weight: 'fill' }), '按声调改写文字')
     ) : null;
 
     // -- toast -----------------------------------------------------------------
-    const toast = st.toast ? h('div', { key: 'toast', style: { position: 'fixed', left: '50%', bottom: 'calc(100px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', background: TOK.ink, color: '#fff', fontSize: 13, fontWeight: 600, lineHeight: 1.35, padding: '10px 15px', borderRadius: R.md, zIndex: 90, boxShadow: '0 8px 24px rgba(28,25,23,0.28)', width: 'max-content', maxWidth: 'min(520px, calc(100vw - 32px))', whiteSpace: 'normal', textAlign: 'center' } }, st.toast) : null;
+    const toast = st.toast ? h('div', { key: 'toast', style: { position: 'fixed', left: '50%', bottom: 'calc(100px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', background: TOK.ink, color: '#fff', fontSize: 13.5, fontWeight: 650, lineHeight: 1.35, padding: '10px 18px', borderRadius: 999, zIndex: 90, boxShadow: '0 8px 24px rgba(28,25,23,0.28)', width: 'max-content', maxWidth: 'min(520px, calc(100vw - 32px))', whiteSpace: 'normal', textAlign: 'center' } }, st.toast) : null;
     const splash = st.splashVisible ? this.renderSplash(h) : null;
 
     return h('div', {
