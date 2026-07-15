@@ -879,6 +879,28 @@ export default class App extends React.Component {
     const cx = vw / 2, cy = vh / 2 - 24;
     this.setState({ panX: cx - worldCx * z, panY: cy - worldCy * z });
   }
+  // Wrap width (world units) applied to a dictation block so long speech wraps
+  // onto new lines to fit ~86% of the viewport instead of running off the edge.
+  _dictationWrapWidth() {
+    const z = this.state.zoom || 1;
+    const W = (typeof window !== 'undefined' && window.innerWidth) || 390;
+    return (W * 0.86) / z;
+  }
+  // Keep the newest dictated words visible: as the block grows downward, pan up
+  // so its bottom edge stays above the dictation bar. Only pans when the bottom
+  // has actually scrolled out of view, so it never fights a still-fitting block.
+  _followDictation(id) {
+    const b = this.state.blocks.find(x => x.id === id); if (!b) return;
+    const r = this.blockWorldRect(b, this.metrics());
+    const z = this.state.zoom || 1;
+    const vh = (typeof window !== 'undefined' && window.visualViewport && window.visualViewport.height) || (typeof window !== 'undefined' ? window.innerHeight : 780);
+    const visibleBottom = vh - 132;                       // clear the dictation bar
+    const bottomScreen = (r.y + r.h) * z + this.state.panY;
+    if (bottomScreen > visibleBottom) {
+      const dy = bottomScreen - visibleBottom;
+      this.setState(s => ({ panY: s.panY - dy }));
+    }
+  }
   componentWillUnmount() {
     window.removeEventListener('mousemove', this._onMove);
     window.removeEventListener('mouseup', this._onUp);
@@ -2012,7 +2034,7 @@ Respond with ONLY a JSON object:
     this.pushHistory();
     this._recBase = '';
     this.setState(s => ({
-      blocks: [...s.blocks, { id, x: p.x, y: p.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...defs }],
+      blocks: [...s.blocks, { id, x: p.x, y: p.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...defs, width: this._dictationWrapWidth() }],
       selectedIds: [id], editingId: id, recording: true, recStatus: 'Listening…'
     }), () => this.centerOnBlock(id));
     this._startWaveViz();
@@ -2042,7 +2064,7 @@ Respond with ONLY a JSON object:
       this.setState(s => ({
         blocks: s.blocks.map(b => b.id === bid ? { ...b, text } : b),
         recStatus: interim ? '… ' + interim.slice(-14) : 'Listening…'
-      }));
+      }), () => this._followDictation(bid));
     };
     r.onerror = (e) => {
       if (e.error === 'no-speech' || e.error === 'aborted') return;
@@ -2073,7 +2095,7 @@ Respond with ONLY a JSON object:
     this.pushHistory();
     this._recBase = ''; this._nativePartial = ''; this._nativeStt = true;
     this.setState(s => ({
-      blocks: [...s.blocks, { id, x: p.x, y: p.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...defs }],
+      blocks: [...s.blocks, { id, x: p.x, y: p.y, text: '', color: s.defColor, weight: s.defWeight, font: s.defFont, ...defs, width: this._dictationWrapWidth() }],
       selectedIds: [id], editingId: id, recording: true, recStatus: 'Starting…'
     }), () => this.centerOnBlock(id));
     this._startWaveViz();
@@ -2085,7 +2107,7 @@ Respond with ONLY a JSON object:
       this.setState(s => ({
         blocks: s.blocks.map(b => b.id === bid ? { ...b, text } : b),
         recStatus: this._nativePartial ? '… ' + this._nativePartial.slice(-14) : 'Listening…'
-      }));
+      }), () => this._followDictation(bid));
     };
     const begin = () => SpeechRecognition.start({ language: 'zh-CN', maxResults: 1, partialResults: true, popup: false });
     try {
