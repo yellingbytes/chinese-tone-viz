@@ -772,6 +772,7 @@ export default class App extends React.Component {
     defColor: '#161410',     // colour + weight applied to new blocks / shown in toolbar
     defWeight: 700,
     defFont: 'noto-sans',    // typeface applied to new blocks / shown in toolbar
+    defScale: null,          // last size the user set on any block; applied to new blocks too
     script: 'simplified',    // 'simplified' | 'traditional' — render-time glyph conversion
     uiLang: detectDefaultUiLang(), // 'en' | 'zh' — interface chrome language, not the canvas content
     addMenuOpen: false,      // "+ Add Text" split-button dropdown
@@ -1036,7 +1037,8 @@ export default class App extends React.Component {
     const newWidth = b.width != null ? b.width * (s / (b.scale || 1)) : b.width;
     const { bbox } = this.layoutBlock(this.glyphsText(b.text), this.scaleMetrics(this.metrics(), s), newWidth);
     const nx = cx - (bbox.x + bbox.w / 2), ny = cy - (bbox.y + bbox.h / 2);
-    this.setState(st => ({ blocks: st.blocks.map(x => x.id === id ? { ...x, scale: s, width: newWidth, x: nx, y: ny } : x) }));
+    // Remember this as the size for future new blocks (Text / Dictate / sample) too.
+    this.setState(st => ({ defScale: s, blocks: st.blocks.map(x => x.id === id ? { ...x, scale: s, width: newWidth, x: nx, y: ny } : x) }));
   }
   // scale every selected block to `s` about its own centre (Size presets)
   applyScaleSelected(s) {
@@ -1919,6 +1921,7 @@ Respond with ONLY a JSON object:
   // blocks default to a smaller scale. Text stays on one line until the user
   // deliberately drags the right handle to set a wrap width. Desktop keeps full scale.
   _blockDefaults() {
+    if (this.state.defScale != null) return { scale: this.state.defScale };
     const W = (typeof window !== 'undefined' && window.innerWidth) || 0;
     if (!W || W >= 640) return {};
     return { scale: 0.5 };
