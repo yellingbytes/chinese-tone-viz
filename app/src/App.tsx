@@ -3020,7 +3020,7 @@ Respond with ONLY a JSON object:
         );
     return h('div', {
       key: 'dictbar',
-      style: { position: 'absolute', left: 0, right: 0, bottom: 'calc(env(safe-area-inset-bottom) + 10px)', display: 'flex', justifyContent: 'center', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
+      style: { position: 'absolute', left: 0, right: 0, bottom: 'env(safe-area-inset-bottom)', display: 'flex', justifyContent: 'center', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
     },
       h('div', {
         className: 'tc-dock-shell',
@@ -3108,110 +3108,13 @@ Respond with ONLY a JSON object:
     const weightVal = sel.length ? (sel[0].weight != null ? sel[0].weight : 700) : this.state.defWeight;
     const fontVal = sel.length ? (sel[0].font || this.state.defFont) : this.state.defFont;
 
-    // Font picker — native <select> with one <optgroup> per source.
-    const groups = {};
-    App.FONTS.forEach(f => { (groups[f.group] = groups[f.group] || []).push(f); });
-    const fontSelect = React.createElement('select', {
-      value: fontVal,
-      onChange: (e) => this.applyStyle({ font: e.target.value }),
-      onMouseDown: (e) => e.stopPropagation(),
-      title: 'Typeface',
-      style: {
-        fontSize: '12.5px', fontWeight: 600, color: '#211e16', padding: '4px 22px 4px 8px',
-        border: '1px solid rgba(20,18,12,0.14)', borderRadius: '8px', background: '#fff',
-        cursor: 'pointer', outline: 'none', maxWidth: '170px',
-        fontFamily: this.fontStack(fontVal, this.state.script)
-      }
-    }, Object.keys(groups).map(g =>
-      React.createElement('optgroup', { key: g, label: g },
-        groups[g].map(f => React.createElement('option', { key: f.id, value: f.id, style: { fontFamily: 'system-ui, sans-serif' } }, f.label)))
-    ));
-
-    // Simplified / Traditional segmented toggle.
-    const seg = (label, val) => {
-      const active = this.state.script === val;
-      return React.createElement('button', {
-        key: val, onClick: () => this.setState({ script: val }), title: val === 'simplified' ? 'Simplified 简体' : 'Traditional 繁體',
-        style: {
-          padding: '4px 11px', fontSize: '14px', fontWeight: 700, lineHeight: 1, borderRadius: '6px',
-          fontFamily: "'Noto Sans SC','Noto Sans TC',sans-serif", border: 'none', cursor: 'pointer',
-          color: active ? '#fff' : '#5b5648',
-          background: active ? '#1c1a14' : 'transparent',
-          boxShadow: active ? '0 1px 2px rgba(20,18,12,0.25)' : 'none'
-        }
-      }, label);
-    };
-    const scriptToggle = React.createElement('div', {
-      style: { display: 'flex', gap: '2px', padding: '2px', background: 'rgba(20,18,12,0.06)', borderRadius: '8px' }
-    }, seg('简', 'simplified'), seg('繁', 'traditional'));
-
-    // Live dictation record button (+ inline status while listening).
-    const rec = this.state.recording;
-    const recordBtn = React.createElement('button', {
-      onClick: () => this.toggleDictation(),
-      onMouseDown: (e) => e.stopPropagation(),
-      title: rec ? 'Stop dictation' : 'Live Chinese dictation (speech-to-text)',
-      style: {
-        display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px',
-        fontSize: '12.5px', fontWeight: 700, borderRadius: '9px', cursor: 'pointer',
-        color: rec ? '#fff' : '#b3261e',
-        background: rec ? '#d23b3b' : 'rgba(210,59,59,0.10)',
-        border: rec ? 'none' : '1px solid rgba(210,59,59,0.28)'
-      }
-    },
-      React.createElement('span', {
-        key: 'dot', style: {
-          width: '9px', height: '9px', borderRadius: '50%', flex: '0 0 auto',
-          background: rec ? '#fff' : '#d23b3b',
-          animation: rec ? 'tc-pulse 1.2s ease-out infinite' : 'none'
-        }
-      }),
-      rec ? 'Stop' : 'Record'
-    );
-    const recStatus = this.state.recStatus;
-    const recErr = /block|error|denied|serve|internet|found|use|file|reopen/i.test(recStatus || '');
-    const recordControl = React.createElement('div', {
-      style: { display: 'flex', alignItems: 'center', gap: '8px' }
-    },
-      recordBtn,
-      recStatus ? React.createElement('span', {
-        key: 'st', title: recStatus,
-        style: { fontSize: '11px', fontWeight: 500, color: recErr ? '#b3261e' : '#8a8674', maxWidth: '210px', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }
-      }, recStatus) : null
-    );
-
-    const framesActive = this.state.showFrames;
-    const framesBtnStyle = {
-      display: 'flex', alignItems: 'center', gap: '5px', padding: '7px 11px',
-      fontSize: '12.5px', fontWeight: 600, borderRadius: '9px', cursor: 'pointer',
-      color: framesActive ? TOK.cobalt : TOK.inkSoft,
-      background: framesActive ? TOK.cobaltSoft : 'transparent',
-      border: framesActive ? '1px solid rgba(36,87,214,0.30)' : '1px solid transparent'
-    };
-    const addMenuStyle = {
-      position: 'absolute', top: 'calc(100% + 8px)', right: 0, minWidth: '188px', padding: '5px',
-      background: '#fff', border: '1px solid rgba(20,18,12,0.10)', borderRadius: '11px',
-      boxShadow: '0 12px 34px rgba(20,18,12,0.16)', zIndex: 60,
-      display: this.state.addMenuOpen ? 'block' : 'none'
-    };
-
     return {
       canvasContent,
       textToolbar,
-      framesBtnStyle,
       colorVal,
       weightVal,
       fontVal,
-      fontSelect,
-      scriptToggle,
-      recordControl,
-      addMenuStyle,
-      setColor: (e) => this.applyStyle({ color: e && e.target ? e.target.value : e }),
       setWeight: (e) => this.applyStyle({ weight: parseInt(e && e.target ? e.target.value : e, 10) || 100 }),
-      toggleFrames: () => this.setState(s => ({ showFrames: !s.showFrames })),
-      addText: () => this.addTextBlock(),
-      toggleAddMenu: () => this.setState(s => ({ addMenuOpen: !s.addMenuOpen })),
-      addSample: () => this.addSampleBlock()
     };
   }
 
@@ -3324,7 +3227,7 @@ Respond with ONLY a JSON object:
     // -- bottom creation dock (selection tools live in the text toolbar) -------
     // While dictating, the dock morphs into an inline live soundwave bar.
     const dock = st.dictating ? this.renderDictationBar(h) : h('div', {
-      style: { position: 'absolute', left: 0, right: 0, bottom: 'calc(env(safe-area-inset-bottom) + 10px)', display: 'flex', justifyContent: 'center', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
+      style: { position: 'absolute', left: 0, right: 0, bottom: 'env(safe-area-inset-bottom)', display: 'flex', justifyContent: 'center', zIndex: 50, userSelect: 'none', pointerEvents: 'none' }
     },
       h('div', { className: 'tc-dock-shell', style: {
         pointerEvents: 'auto',
@@ -3354,7 +3257,7 @@ Respond with ONLY a JSON object:
     // -- empty state: a single localized invitation that floats just above the
     // dock with a gently bobbing down-chevron pointing at the creation tools ----
     const empty = (!st.blocks.length) ? h('div', {
-      style: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', paddingBottom: 'calc(env(safe-area-inset-bottom) + 92px)', pointerEvents: 'none', zIndex: 5 }
+      style: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', paddingBottom: 'calc(env(safe-area-inset-bottom) + 82px)', pointerEvents: 'none', zIndex: 5 }
     },
       h('div', { className: 'tc-empty-hint' },
         h('div', { style: { fontSize: 15, fontWeight: 650, color: TOK.inkSoft, letterSpacing: 0, textAlign: 'center', maxWidth: 244, lineHeight: 1.4 } }, this.t('empty_start')),
@@ -3405,7 +3308,7 @@ Respond with ONLY a JSON object:
 
     // -- Wave transform UI: pending label, done controls, or (no key) the chip --
     const xf = st.waveXform;
-    const barBase = { position: 'absolute', left: '50%', bottom: 'calc(env(safe-area-inset-bottom) + 88px)', transform: 'translateX(-50%)', zIndex: 55 };
+    const barBase = { position: 'absolute', left: '50%', bottom: 'calc(env(safe-area-inset-bottom) + 78px)', transform: 'translateX(-50%)', zIndex: 55 };
     let waveTransformUi = null;
     if (xf && xf.phase === 'pending') {
       waveTransformUi = h('div', { key: 'xfp', style: barBase },
